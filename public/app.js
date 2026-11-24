@@ -317,6 +317,7 @@ const state = {
   streamToken: 0,      // 每发起/放弃一条流就 +1，用来判定「这条流是否还属于当前视图」
   abortCtrl: null,
   useSearch: true,
+  thinking: false,
   branches: {},        // nodeId → { index, count, ids }
   editing: null,       // { nodeId, parentId } 正在编辑的旧提问
   attachments: [],     // 待发送的附件（已上传到官方 Files API）
@@ -373,6 +374,13 @@ const els = {
   keyDot: $('#keyDot'),
   toast: $('#toast'),
   btnEditCancel: $('#btnEditCancel'),
+  btnThink: $('#btnThink'),
+  btnJumpLatest: $('#btnJumpLatest'),
+  sourcesScrim: $('#sourcesScrim'),
+  sourcesDrawer: $('#sourcesDrawer'),
+  sourcesCount: $('#sourcesCount'),
+  sourcesBody: $('#sourcesBody'),
+  btnCloseSources: $('#btnCloseSources'),
 };
 
 async function api(path, opts = {}) {
@@ -441,7 +449,9 @@ async function loadConfig() {
   try {
     state.config = await api('/api/config');
     state.useSearch = state.config.webSearch;
+    state.thinking = state.config.thinking;
     syncSearchBtn();
+    syncThinkBtn();
     els.keyDot.classList.toggle('ok', state.config.hasKey);
     els.keyDot.title = state.config.hasKey ? `已配置 ${state.config.keyHint}` : 'API Key 未配置';
     fillSettingsForm();
@@ -542,26 +552,32 @@ function renderWelcome() {
   const wrap = el('div', 'welcome');
   wrap.innerHTML = `
     <div class="welcome-mark">
-      <svg viewBox="0 0 28 28" width="34" height="34" fill="none">
+      <svg viewBox="0 0 28 28" width="40" height="40" fill="none">
         <path d="M4.5 17.5c0-5.2 4.2-9.4 9.4-9.4 3.9 0 7.3 2.4 8.7 5.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
         <path d="M4.5 17.5c2.6 0 3.7 1.7 5 3.1 1.4 1.4 3 2.6 5.7 2.6 3.1 0 5.1-1.6 6.3-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
         <circle cx="19.6" cy="11.4" r="1.05" fill="currentColor"/>
       </svg>
     </div>
     <h1>今天想聊点什么？</h1>
-    <p>${state.config?.webSearch ? '已开启联网搜索，遇到时效性问题我会自动去查。' : '联网搜索已关闭，问答基于模型自身知识。'}</p>
+    <p class="welcome-sub">问问题、查资料、读文档，或让它帮你写代码。${state.config?.webSearch ? '需要最新消息时会自动联网。' : ''}</p>
     <div class="suggests"></div>`;
 
   const suggests = [
-    ['查一下最新消息', '今天科技圈有什么值得关注的新闻？帮我汇总一下'],
-    ['解释一个概念', '用打比方的方式解释什么是「向量数据库」'],
-    ['写点代码', '用 Node.js 写一个带重试和超时的 fetch 封装'],
-    ['读一篇网页', '帮我总结 https://nodejs.org/en/blog 最近一篇文章的要点'],
+    ['news', '查一下最新消息', '今天科技圈有什么值得关注的新闻？帮我汇总一下', '汇总今日要闻并附来源'],
+    ['book', '解释一个概念', '用打比方的方式解释什么是「向量数据库」', '用打比方的方式讲清抽象概念'],
+    ['code', '写点代码', '用 Node.js 写一个带重试和超时的 fetch 封装', '写出可以直接用的实现'],
+    ['link', '读一篇网页', '帮我总结 https://nodejs.org/en/blog 最近一篇文章的要点', '丢个链接，提炼重点'],
   ];
+  const icons = {
+    news: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.3 3.8 5.2 3.8 8.5s-1.3 6.2-3.8 8.5c-2.5-2.3-3.8-5.2-3.8-8.5S9.5 5.8 12 3.5Z"/>',
+    book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5Z"/><path d="M4 5.5v15M8 7h8M8 11h6"/>',
+    code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M13 4l-2 16"/>',
+    link: '<path d="M10 13.5a3.6 3.6 0 0 0 5.1 0l2.2-2.2a3.6 3.6 0 0 0-5.1-5.1L11 7.4"/><path d="M14 10.5a3.6 3.6 0 0 0-5.1 0L6.7 12.7a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2"/>',
+  };
   const box = wrap.querySelector('.suggests');
-  for (const [title, text] of suggests) {
+  for (const [icon, title, text, desc] of suggests) {
     const b = el('button', 'suggest');
-    b.innerHTML = `<b>${escapeHtml(title)}</b>${escapeHtml(text)}`;
+    b.innerHTML = `<span class="s-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icons[icon]}</svg></span><span class="s-main"><b>${escapeHtml(title)}</b><span>${escapeHtml(desc)}</span></span><span class="s-go" aria-hidden="true">↗</span>`;
     b.addEventListener('click', () => {
       els.input.value = text;
       autosize();
@@ -644,11 +660,12 @@ function addUserMessage(text, nodeId, files) {
   if (nodeId) msg.dataset.id = nodeId;
   msg.innerHTML = `
     <div class="msg-body">
-      <div class="msg-role">你</div>
       <div class="bubble"></div>
       <div class="msg-files"></div>
       <div class="msg-actions user-actions">
-        <button class="act-edit" type="button">编辑</button>
+        <button class="act-edit" type="button" title="编辑这条提问（发送后保留旧版本）" aria-label="编辑提问">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17Z"/><path d="m14.5 7 3 3"/></svg>
+        </button>
       </div>
     </div>`;
   msg.querySelector('.bubble').textContent = text;
@@ -702,30 +719,77 @@ function addAssistantMessage(text = '', reasoning = '', tools = [], model = '', 
   const msg = el('div', 'msg assistant');
   if (nodeId) msg.dataset.id = nodeId;
   msg.innerHTML = `
+    <div class="msg-avatar" aria-hidden="true"><svg viewBox="0 0 28 28" width="19" height="19" fill="none">
+      <path d="M4.5 17.5c0-5.2 4.2-9.4 9.4-9.4 3.9 0 7.3 2.4 8.7 5.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M4.5 17.5c2.6 0 3.7 1.7 5 3.1 1.4 1.4 3 2.6 5.7 2.6 3.1 0 5.1-1.6 6.3-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="19.6" cy="11.4" r="1.3" fill="currentColor"/>
+    </svg></div>
     <div class="msg-body">
-      <div class="msg-role"><span>DeepSeek</span>${model === 'deepseek-v4-pro' ? '<span class="model-tag">Pro</span>' : '<span class="model-tag">Flash</span>'}</div>
-      <div class="reasoning-slot"></div>
-      <div class="tool-stack"></div>
+      <div class="msg-role"><span>DeepSeek</span>${model === 'deepseek-v4-pro' ? '<span class="model-tag">V4 Pro</span>' : '<span class="model-tag">Flash</span>'}</div>
+      <div class="process-box open" hidden>
+        <button class="process-head" type="button">
+          <span class="spinner"></span>
+          <span class="p-title">思考中…</span>
+          <span class="p-meta"></span>
+          <svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+          <span class="p-more">收起</span>
+        </button>
+        <div class="process-body">
+          <div class="reasoning" hidden>
+            <button class="reasoning-head" type="button">
+              <span class="r-title">思考过程</span>
+              <svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+              <span class="r-more">收起</span>
+            </button>
+            <div class="reasoning-body"></div>
+          </div>
+          <div class="tool-stack"></div>
+        </div>
+      </div>
       <div class="prose"><p class="caret-blink"></p></div>
+      <div class="sources-slot"></div>
       <div class="msg-actions">
-        <button class="act-copy" type="button">复制</button>
-        <button class="act-regen" type="button">重新生成</button>
+        <button class="act-copy" type="button" title="复制回答" aria-label="复制回答">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+          <span class="act-label">复制</span>
+        </button>
+        <button class="act-regen" type="button" title="重新生成（保留旧版本）" aria-label="重新生成">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-1.5 6.5"/><path d="M20 5v6h-6"/></svg>
+          <span class="act-label">重新生成</span>
+        </button>
       </div>
     </div>`;
   els.messages.append(msg);
 
   const prose = msg.querySelector('.prose');
-  const toolStack = msg.querySelector('.tool-stack');
-  const reasoningSlot = msg.querySelector('.reasoning-slot');
+  const processBox = msg.querySelector('.process-box');
+  const processHead = processBox.querySelector('.process-head');
+  const processTitle = processBox.querySelector('.p-title');
+  const processMeta = processBox.querySelector('.p-meta');
+  const processMore = processBox.querySelector('.p-more');
+  const toolStack = processBox.querySelector('.tool-stack');
+  const reasoningEl = processBox.querySelector('.reasoning');
+  const reasoningHead = reasoningEl.querySelector('.reasoning-head');
+  const reasoningBody = reasoningEl.querySelector('.reasoning-body');
+  const reasoningMore = reasoningEl.querySelector('.r-more');
+  const sourcesSlot = msg.querySelector('.sources-slot');
   const actions = msg.querySelector('.msg-actions');
 
   let raw = text;
   let think = reasoning;
   let anns = null;
-  let reasoningEl = null;
-  let reasoningBody = null;
   let renderTimer = null;
   let dirty = false;
+  let toolCount = 0;
+
+  processHead.addEventListener('click', () => {
+    processBox.classList.toggle('open');
+    processMore.textContent = processBox.classList.contains('open') ? '收起' : '展开';
+  });
+  reasoningHead.addEventListener('click', () => {
+    reasoningEl.classList.toggle('open');
+    reasoningMore.textContent = reasoningEl.classList.contains('open') ? '收起' : '展开';
+  });
 
   const api = {
     node: msg,
@@ -739,16 +803,16 @@ function addAssistantMessage(text = '', reasoning = '', tools = [], model = '', 
       reasoningBody.textContent = think;
       reasoningBody.scrollTop = reasoningBody.scrollHeight;
     },
+    addTool(tool) {
+      toolCount += 1;
+      processBox.hidden = false;
+      updateProcessHeader(false);
+      return addToolCard(toolStack, tool);
+    },
     finish() {
       flush();
       prose.querySelector('.caret-blink')?.remove();
-      if (reasoningEl && !reasoningEl.dataset.finished) {
-        reasoningEl.dataset.finished = '1';
-        reasoningEl.classList.remove('open');
-        reasoningEl.querySelector('.spinner')?.remove();
-        const st = reasoningEl.querySelector('.r-state');
-        if (st) st.textContent = '已折叠';
-      }
+      finalizeProcess();
     },
     fail(msg2) {
       prose.querySelector('.caret-blink')?.remove();
@@ -775,22 +839,48 @@ function addAssistantMessage(text = '', reasoning = '', tools = [], model = '', 
   };
 
   function ensureReasoning() {
-    if (reasoningEl) return;
-    reasoningEl = el('div', 'reasoning open');
-    reasoningEl.innerHTML = `
-      <button class="reasoning-head" type="button">
-        <span class="spinner"></span>
-        <span class="r-title">思考中</span>
-        <span class="r-state"></span>
-        <svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
-        <span class="r-more">展开</span>
-      </button>
-      <div class="reasoning-body"></div>`;
-    reasoningBody = reasoningEl.querySelector('.reasoning-body');
-    reasoningEl.querySelector('.reasoning-head').addEventListener('click', () => {
-      reasoningEl.classList.toggle('open');
-    });
-    reasoningSlot.append(reasoningEl);
+    processBox.hidden = false;
+    if (reasoningEl.hidden) {
+      reasoningEl.hidden = false;
+      reasoningEl.classList.add('open');
+      reasoningMore.textContent = '收起';
+    }
+    updateProcessHeader(false);
+  }
+
+  function updateProcessHeader(finished) {
+    const hasThink = !!think;
+    if (!finished) {
+      if (toolCount > 0 && hasThink) processTitle.textContent = '正在思考与检索…';
+      else if (toolCount > 0) processTitle.textContent = '正在执行操作…';
+      else processTitle.textContent = '思考中…';
+      processMeta.textContent = toolCount > 0 ? `${toolCount} 步` : '';
+      return;
+    }
+    if (hasThink && toolCount > 0) {
+      processTitle.textContent = '思考与执行过程';
+      processMeta.textContent = `${toolCount} 步操作`;
+    } else if (toolCount > 0) {
+      processTitle.textContent = '执行过程';
+      processMeta.textContent = `${toolCount} 步操作`;
+    } else if (hasThink) {
+      processTitle.textContent = '思考过程';
+      processMeta.textContent = '';
+    }
+  }
+
+  /** 流结束或历史消息落库后统一收尾：折叠总面板与内嵌思考、去 spinner、更新摘要。 */
+  function finalizeProcess() {
+    if (processBox.hidden || processBox.dataset.finished) return;
+    processBox.dataset.finished = '1';
+    processBox.querySelector('.process-head .spinner')?.remove();
+    processBox.classList.remove('open');
+    processMore.textContent = '展开';
+    if (!reasoningEl.hidden) {
+      reasoningEl.classList.remove('open');
+      reasoningMore.textContent = '展开';
+    }
+    updateProcessHeader(true);
   }
 
   function schedule() {
@@ -805,7 +895,10 @@ function addAssistantMessage(text = '', reasoning = '', tools = [], model = '', 
     clearTimeout(renderTimer);
     renderTimer = null;
     prose.innerHTML = renderMarkdown(raw) || '<p class="caret-blink"></p>';
-    if (anns && anns.length) applyAnnotations(prose, anns, raw);
+    if (anns && anns.length) {
+      const sources = applyAnnotations(prose, anns, raw, (idx) => openSourcesDrawer(sources, idx));
+      renderSourcesTrigger(sourcesSlot, sources);
+    }
     if (!state.streaming || api._done) prose.querySelector('.caret-blink')?.remove();
   }
 
@@ -813,8 +906,13 @@ function addAssistantMessage(text = '', reasoning = '', tools = [], model = '', 
     ensureReasoning();
     reasoningBody.textContent = reasoning;
   }
+  if (tools?.length) {
+    tools.forEach((t) => api.addTool(t));
+  }
+  if (reasoning || tools?.length) {
+    finalizeProcess();
+  }
   if (text) api.setContent(text);
-  if (tools?.length) tools.forEach((t) => addToolCard(toolStack, t));
   if (annotationList && annotationList.length) api.setAnnotations(annotationList);
 
   return api;
@@ -843,7 +941,7 @@ function normCite(a) {
   };
 }
 
-function applyAnnotations(container, anns, raw) {
+function applyAnnotations(container, anns, raw, onOpenSource) {
   container.querySelectorAll('.cite, .cite-sources').forEach((n) => n.remove());
 
   const seen = new Map();
@@ -922,14 +1020,14 @@ function applyAnnotations(container, anns, raw) {
       const at = domChars[di];
       if (at.node.parentNode.closest?.('pre, code, sup')) continue;
 
+      const num = seen.get(c.url);
       const sup = el('sup', 'cite');
-      sup.textContent = String(seen.get(c.url));
+      sup.textContent = String(num);
       sup.title = c.title || c.url;
-      const safe = safeUrl(c.url);
-      if (safe) {
-        sup.dataset.href = safe;
-        sup.addEventListener('click', () => window.open(safe, '_blank', 'noopener'));
-      }
+      sup.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (onOpenSource) onOpenSource(num);
+      });
       const val = at.node.nodeValue;
       const cps = Array.from(val);
       const before = cps.slice(0, at.offset + 1).join(''); // 含被引用的最后一个字
@@ -941,27 +1039,56 @@ function applyAnnotations(container, anns, raw) {
     }
   }
 
-  // 末尾来源列表（无论能否插入角标都显示）
-  const box = el('div', 'cite-sources');
-  box.append(el('div', 'cite-sources-title', '来源'));
-  const ol = el('ol', 'cite-list');
-  for (const c of sources) {
-    const li = el('li');
+  return sources;
+}
+
+function renderSourcesTrigger(slot, sources) {
+  slot.innerHTML = '';
+  if (!sources || !sources.length) return;
+  const btn = el('button', 'sources-trigger');
+  btn.type = 'button';
+  btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13.5a3.6 3.6 0 0 0 5.1 0l2.2-2.2a3.6 3.6 0 0 0-5.1-5.1L11 7.4"/><path d="M14 10.5a3.6 3.6 0 0 0-5.1 0L6.7 12.7a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2"/></svg><span>参考来源 · ${sources.length}</span><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>`;
+  btn.addEventListener('click', () => openSourcesDrawer(sources, null));
+  slot.append(btn);
+}
+
+function openSourcesDrawer(sources, highlightNum) {
+  if (!sources || !sources.length) return;
+  els.sourcesCount.textContent = String(sources.length);
+  els.sourcesBody.innerHTML = '';
+  let hitCard = null;
+  sources.forEach((c, idx) => {
+    const num = idx + 1;
     const safe = safeUrl(c.url);
+    const card = safe ? el('a', 'source-card') : el('div', 'source-card');
     if (safe) {
-      const a = el('a', null, c.title || c.url);
-      a.href = safe;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      li.append(a);
-    } else {
-      li.append(el('span', null, c.title || c.url));
+      card.href = safe;
+      card.target = '_blank';
+      card.rel = 'noopener noreferrer';
     }
-    li.append(el('span', 'cite-url', c.url));
-    ol.append(li);
+    if (highlightNum === num) {
+      card.classList.add('hit');
+      hitCard = card;
+    }
+    card.append(el('span', 'source-idx', String(num)));
+    const main = el('div', 'source-main');
+    main.append(el('span', 'source-title', c.title || c.url));
+    main.append(el('span', 'source-url', c.url));
+    card.append(main);
+    els.sourcesBody.append(card);
+  });
+  els.sourcesScrim.classList.add('open');
+  els.sourcesDrawer.classList.add('open');
+  els.sourcesDrawer.setAttribute('aria-hidden', 'false');
+  if (hitCard) {
+    requestAnimationFrame(() => hitCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
   }
-  box.append(ol);
-  container.append(box);
+}
+
+function closeSourcesDrawer() {
+  els.sourcesScrim.classList.remove('open');
+  els.sourcesDrawer.classList.remove('open');
+  els.sourcesDrawer.setAttribute('aria-hidden', 'true');
 }
 
 function addToolCard(stack, tool = {}) {
@@ -1192,6 +1319,7 @@ function autosize() {
 function scrollToBottom(force = false) {
   const near = els.scroll.scrollHeight - els.scroll.scrollTop - els.scroll.clientHeight < 180;
   if (force || near) els.scroll.scrollTop = els.scroll.scrollHeight;
+  syncJumpLatest();
 }
 
 /**
@@ -1283,6 +1411,7 @@ async function send(regenNodeId = null) {
         message: text,
         model: state.model,
         useSearch: state.useSearch,
+        thinking: state.thinking,
         ...(editing ? { parentId } : {}),
         ...(regenNodeId ? { regenFrom: regenNodeId } : {}),
         ...(files.length
@@ -1359,7 +1488,7 @@ async function send(regenNodeId = null) {
         case 'tool_start': {
           roundBreak = true;
           const label = evt.label || '联网';
-          currentTool = addToolCard(handle.tools, { tool: evt.tool, label });
+          currentTool = handle.addTool({ tool: evt.tool, label });
           toolsSeen.push({ tool: evt.tool, label, status: 'running' });
           scrollToBottom();
           break;
@@ -1553,7 +1682,9 @@ async function saveSettings() {
   try {
     state.config = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
     state.useSearch = state.config.webSearch;
+    state.thinking = state.config.thinking;
     syncSearchBtn();
+    syncThinkBtn();
     els.keyDot.classList.toggle('ok', state.config.hasKey);
     els.keyDot.title = state.config.hasKey ? `已配置 ${state.config.keyHint}` : 'API Key 未配置';
     closeSettings();
@@ -1567,6 +1698,16 @@ async function saveSettings() {
 function syncSearchBtn() {
   els.btnSearch.setAttribute('aria-pressed', String(!!state.useSearch));
   els.btnSearch.title = `联网搜索：${state.useSearch ? '开启' : '关闭'}`;
+}
+
+function syncThinkBtn() {
+  els.btnThink.setAttribute('aria-pressed', String(!!state.thinking));
+  els.btnThink.title = `深度思考：${state.thinking ? '开启' : '关闭'}`;
+}
+
+function syncJumpLatest() {
+  const far = els.scroll.scrollHeight - els.scroll.scrollTop - els.scroll.clientHeight > 240;
+  els.btnJumpLatest.hidden = !far;
 }
 
 /* ============ 9. 事件绑定 ============ */
@@ -1661,7 +1802,15 @@ function bindEvents() {
     api('/api/config', { method: 'POST', body: JSON.stringify({ webSearch: state.useSearch }) }).catch(
       () => {}
     );
-    toast(`联网搜索已${state.useSearch ? '开启' : '关闭'}`);
+  });
+
+  /* 深度思考开关：按轮生效，同时同步全局默认值 */
+  els.btnThink.addEventListener('click', () => {
+    state.thinking = !state.thinking;
+    syncThinkBtn();
+    api('/api/config', { method: 'POST', body: JSON.stringify({ thinking: state.thinking }) }).catch(
+      () => {}
+    );
   });
 
   /* 明暗切换 */
@@ -1713,11 +1862,17 @@ function bindEvents() {
   $('#btnSettings').addEventListener('click', openSettings);
   $('#btnCloseSettings').addEventListener('click', closeSettings);
   $('#btnSaveSettings').addEventListener('click', saveSettings);
+  els.btnCloseSources.addEventListener('click', closeSourcesDrawer);
+  els.sourcesScrim.addEventListener('click', closeSourcesDrawer);
   els.settingsModal.addEventListener('click', (e) => {
     if (e.target === els.settingsModal) closeSettings();
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (els.sourcesDrawer.classList.contains('open')) {
+        closeSourcesDrawer();
+        return;
+      }
       if (state.editing) {
         cancelEdit();
         return;
@@ -1769,8 +1924,13 @@ function bindEvents() {
       const msg = actCopy.closest('.msg');
       const text = msg.querySelector('.prose')?.innerText || '';
       await copyText(text);
-      actCopy.textContent = '已复制';
-      setTimeout(() => (actCopy.textContent = '复制'), 1400);
+      const label = actCopy.querySelector('.act-label');
+      if (label) label.textContent = '已复制';
+      actCopy.classList.add('done');
+      setTimeout(() => {
+        if (label) label.textContent = '复制';
+        actCopy.classList.remove('done');
+      }, 1400);
       return;
     }
     const actRegen = e.target.closest('.act-regen');
@@ -1815,6 +1975,12 @@ function bindEvents() {
   /* 移动端输入时避免被键盘遮挡 */
   els.input.addEventListener('focus', () => {
     setTimeout(() => scrollToBottom(true), 260);
+  });
+
+  /* 回到底部 */
+  els.scroll.addEventListener('scroll', syncJumpLatest, { passive: true });
+  els.btnJumpLatest.addEventListener('click', () => {
+    els.scroll.scrollTo({ top: els.scroll.scrollHeight, behavior: 'smooth' });
   });
 }
 

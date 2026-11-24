@@ -46,7 +46,7 @@ public class NativeBridge {
 
     @JavascriptInterface
     public void pickFile(String callbackId) {
-        pendingCallbacks.addLast(callbackId);
+        pendingCallbacks.add(callbackId);
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -76,7 +76,7 @@ public class NativeBridge {
 
     @JavascriptInterface
     public void takePhoto(String callbackId) {
-        pendingCallbacks.addLast(callbackId);
+        pendingCallbacks.add(callbackId);
         try {
             File dir = new File(activity.getCacheDir(), "photos");
             if (!dir.exists()) dir.mkdirs();
@@ -184,7 +184,7 @@ public class NativeBridge {
     private void successMulti(org.json.JSONArray items) {
         String cb = pendingCallbacks.poll();
         if (cb == null) return;
-        String js = "window.__nativeResolve(" + JSON.stringify(cb)
+        String js = "window.__nativeResolve(" + JSONObject.quote(cb)
                 + ",{ok:true,payloads:" + items + "})";
         evaluate(js);
     }
@@ -287,15 +287,15 @@ public class NativeBridge {
     private void success(String payloadJson) {
         String cb = pendingCallbacks.poll();
         if (cb == null) return;
-        String js = "window.__nativeResolve(" + JSON.stringify(cb) + ",{ok:true,payload:" + payloadJson + "})";
+        String js = "window.__nativeResolve(" + JSONObject.quote(cb) + ",{ok:true,payload:" + payloadJson + "})";
         evaluate(js);
     }
 
     private void fail(String message) {
         String cb = pendingCallbacks.poll();
         if (cb == null) return;
-        String js = "window.__nativeResolve(" + JSON.stringify(cb)
-                + ",{ok:false,error:" + JSON.stringify(message) + "})";
+        String js = "window.__nativeResolve(" + JSONObject.quote(cb)
+                + ",{ok:false,error:" + JSONObject.quote(message) + "})";
         evaluate(js);
     }
 

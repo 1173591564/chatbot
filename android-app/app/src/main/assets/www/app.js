@@ -1219,7 +1219,7 @@
       stream: !!stream
     };
     if (stream) body.stream_options = { include_usage: true };
-    if (settings.thinking) body.thinking = { type: 'enabled' };
+    body.thinking = { type: settings.thinking ? 'enabled' : 'disabled' };
     if (settings.safety) body.safety_check = { level: 'high' };
     if (settings.autoTitle) body.title = { enabled: true };
 
@@ -1687,6 +1687,8 @@
     var serverCalls = null;
     var annotations = null;
     var finishReason = null;
+    var generatedTitle = '';
+    var isFirstAnswer = !sTree || !sTree.nodes.some(function (n) { return n.role === 'assistant'; });
     var aborted = false;
 
     streaming = true;
@@ -1710,6 +1712,7 @@
       annotations = null;
       serverCalls = null;
       finishReason = null;
+      generatedTitle = '';
 
       return fetch(apiUrl('/chat/completions'), {
         method: 'POST',
@@ -1827,6 +1830,7 @@
       // 中止时也把已生成的部分留下
       var rec = null;
       if (content.trim()) {
+        if (generatedTitle && isFirstAnswer) sTree.title = generatedTitle;
         rec = addNode(sTree, {
           parentId: answerParentId,
           role: 'assistant',
@@ -1905,6 +1909,9 @@
       if (delta.annotations) {
         annotations = delta.annotations;
         handle.setAnnotations(annotations);
+      }
+      if (typeof delta.title === 'string' && delta.title.trim()) {
+        generatedTitle = delta.title.trim();
       }
 
       if (choice.finish_reason) finishReason = choice.finish_reason;

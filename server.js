@@ -422,6 +422,10 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.useSearch === 'boolean') {
         cfg.webSearch = body.useSearch;
       }
+      // 深度思考同样可以按轮覆盖（输入框上的开关），不写回全局配置
+      if (typeof body.thinking === 'boolean') {
+        cfg.thinking = body.thinking;
+      }
 
       /* SSE 头：注意必须立刻 flush，且关闭代理缓冲 */
       res.writeHead(200, {
@@ -515,6 +519,9 @@ const server = http.createServer(async (req, res) => {
       let serverCalls = null;
       let streamError = null;
 
+      let generatedTitle = '';
+      const isFirstAnswer = !(getSession(session.id)?.nodes || []).some((n) => n.role === 'assistant');
+
       try {
         const result = await runChat({
           messages,
@@ -535,6 +542,7 @@ const server = http.createServer(async (req, res) => {
             else if (evt.type === 'done') {
               if (evt.serverCalls) serverCalls = evt.serverCalls;
               if (evt.annotations) annotations = evt.annotations;
+              if (evt.title) generatedTitle = evt.title;
             } else if (evt.type === 'tool_start') {
               // 官方的 call_started 只带 action，转成前端认识的结构
               const t = describeCall(evt.call);
@@ -632,6 +640,9 @@ const server = http.createServer(async (req, res) => {
             : undefined,
         });
         setLeaf(session.id, assistantNode?.id || userNode.id);
+        if (generatedTitle && isFirstAnswer) {
+          updateSession(session.id, { title: generatedTitle });
+        }
         trySend({ type: 'end', assistantId: assistantNode?.id || null });
         trySend({ type: 'title', title: getSession(session.id)?.title || '新对话' });
       } else {
