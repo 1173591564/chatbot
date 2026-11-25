@@ -50,6 +50,7 @@ public class MainActivity extends AppCompatActivity {
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#F7F5F0"));
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);

@@ -1297,7 +1297,21 @@
       }
     }
 
+    // 按更新时间分成 今天/更早 两组，找旧会话不用在长列表里翻
+    var todayStr = new Date().toDateString();
+    var groups = { '今天': [], '更早': [] };
     list.forEach(function (s) {
+      groups[new Date(s.updatedAt).toDateString() === todayStr ? '今天' : '更早'].push(s);
+    });
+    ['今天', '更早'].forEach(function (label) {
+      var arr = groups[label];
+      if (!arr.length) return;
+      E.sheetList.appendChild(el('div', 'sess-group', label));
+      arr.forEach(addSessRow);
+    });
+  }
+
+  function addSessRow(s) {
       var row = el('div', 'sess' + (s.id === currentId ? ' active' : ''));
       var t = el('span', 's-title');
       t.textContent = s.title || '新对话';
@@ -1332,7 +1346,6 @@
         closeAll();
       });
       E.sheetList.appendChild(row);
-    });
   }
 
   /* =========================================================
@@ -1393,8 +1406,17 @@
    * 一律退化成 file_id 引用，否则每轮都会把几十 MB 的 base64 重新塞一遍，
    * 手机上又慢又容易被运营商/代理掐断。
    */
+  function todayLine() {
+    var d = new Date();
+    return '今天的日期是 ' + d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate()
+      + ' 日（星期' + '日一二三四五六'.charAt(d.getDay()) + '）。'
+      + '回答涉及时效性的问题（如"今天""最新""近期"）时，以此日期为准。';
+  }
+
   function toApiMessages(prefix, upToId) {
     var out = [];
+    // 模型不知道"今天"是几号，必须客户端注入——否则问时效性问题它按训练数据里的旧日期答
+    out.push({ role: 'system', content: todayLine() });
     if (settings.systemPrompt) out.push({ role: 'system', content: settings.systemPrompt });
     // upToId：只带到这条消息为止（编辑旧提问时不能把它后面的内容也塞给模型）
     var src = messages;
@@ -2242,6 +2264,36 @@
     }
 
     $('#btnMenu').addEventListener('click', function () { openSheet('sessions'); });
+
+    // 中部右滑拉出会话抽屉。起势点让开左缘 40px——那段是系统返回手势区，
+    // 不抢；落在可横向滚动元素上（代码块已滚过的）也不抢
+    var edgeSwipe = null;
+    document.addEventListener('touchstart', function (e) {
+      edgeSwipe = null;
+      if (e.touches.length !== 1) return;
+      if (!E.sheet.hidden || !E.settings.hidden) return;
+      var t = e.touches[0];
+      if (t.clientX <= 40 || t.clientX > window.innerWidth * 0.7) return;
+      for (var p = e.target; p && p !== document.body; p = p.parentElement) {
+        if (p.scrollWidth > p.clientWidth + 8 && p.scrollLeft > 4) return;
+      }
+      edgeSwipe = { x: t.clientX, y: t.clientY, id: t.identifier };
+    }, { passive: true });
+    document.addEventListener('touchmove', function (e) {
+      if (!edgeSwipe) return;
+      for (var i = 0; i < e.changedTouches.length; i++) {
+        var t = e.changedTouches[i];
+        if (t.identifier !== edgeSwipe.id) continue;
+        var dx = t.clientX - edgeSwipe.x;
+        var dy = t.clientY - edgeSwipe.y;
+        if (dx > 72 && dx > Math.abs(dy) * 1.5) {
+          openSheet('sessions');
+          edgeSwipe = null;
+        }
+      }
+    }, { passive: true });
+    document.addEventListener('touchend', function () { edgeSwipe = null; }, { passive: true });
+    document.addEventListener('touchcancel', function () { edgeSwipe = null; }, { passive: true });
     $('#btnCloseSheet').addEventListener('click', closeAll);
     E.sheetMask.addEventListener('click', closeAll);
 

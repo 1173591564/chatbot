@@ -866,7 +866,6 @@ html[data-theme="dark"] .tok-f { color: #8fb0c8; }
 }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .composer textarea {
-  flex: 1;
   background: transparent;
   border: 0;
   outline: 0;
