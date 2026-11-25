@@ -38,6 +38,9 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private NativeBridge bridge;
     private TextView errorView;
+    private FrameLayout root;
+    private float safeTop, safeRight, safeBottom, safeLeft;
+    private boolean hasInsets;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -68,6 +71,9 @@ public class MainActivity extends AppCompatActivity {
         // 多窗口关掉：前端所有外链都走 AndroidBridge.openUrl()
         s.setSupportMultipleWindows(false);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
+
+        // 关掉 WebView 边缘回弹：页面被整体拖拽位移是输入框脱离键盘的根源之一
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
         bridge = new NativeBridge(this, webView);
         webView.addJavascriptInterface(bridge, "AndroidBridge");
@@ -129,6 +135,7 @@ public class MainActivity extends AppCompatActivity {
             public void onPageFinished(WebView view, String url) {
                 if (errorView != null && url != null && url.startsWith("about:")) return;
                 if (errorView != null) errorView.setVisibility(View.GONE);
+                injectSafeArea();
             }
 
             @Override
@@ -154,7 +161,7 @@ public class MainActivity extends AppCompatActivity {
         errorView.setPadding(48, 96, 48, 48);
         errorView.setVisibility(View.GONE);
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#F7F5F0"));
         root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -179,17 +186,35 @@ public class MainActivity extends AppCompatActivity {
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
+            // edge-to-edge 下 adjustResize 不生效，键盘避让靠这里把 ime.bottom
+            // 注入 --safe-bottom 让前端抬升输入区
             int bottom = Math.max(bars.bottom, ime.bottom);
-            v.setPadding(0, bars.top, 0, 0);
-            String js = "(function(){var r=document.documentElement.style;"
-                    + "r.setProperty('--safe-top','" + bars.top + "px');"
-                    + "r.setProperty('--safe-right','" + bars.right + "px');"
-                    + "r.setProperty('--safe-bottom','" + bottom + "px');"
-                    + "r.setProperty('--safe-left','" + bars.left + "px');"
-                    + "window.dispatchEvent(new CustomEvent('safearea'));})()";
-            webView.evaluateJavascript(js, null);
+            v.setPadding(0, 0, 0, 0);
+            // insets 是物理像素，WebView 的 CSS px 是 dp，必须换算后再注入
+            float d = v.getResources().getDisplayMetrics().density;
+            safeTop = bars.top / d;
+            safeRight = bars.right / d;
+            safeBottom = bottom / d;
+            safeLeft = bars.left / d;
+            hasInsets = true;
+            injectSafeArea();
             return insets;
         });
+    }
+
+    /**
+     * 把最近一次 insets 写进页面 CSS 变量。页面还没加载完时 evaluateJavascript
+     * 会落在旧文档上、随导航被丢弃，所以 onPageFinished 里要重放一次。
+     */
+    private void injectSafeArea() {
+        if (!hasInsets || webView == null) return;
+        String js = "(function(){var r=document.documentElement.style;"
+                + "r.setProperty('--safe-top','" + safeTop + "px');"
+                + "r.setProperty('--safe-right','" + safeRight + "px');"
+                + "r.setProperty('--safe-bottom','" + safeBottom + "px');"
+                + "r.setProperty('--safe-left','" + safeLeft + "px');"
+                + "window.dispatchEvent(new CustomEvent('safearea'));})()";
+        webView.evaluateJavascript(js, null);
     }
 
     /** 状态栏/导航栏图标明暗，跟随前端主题 */
@@ -205,7 +230,10 @@ public class MainActivity extends AppCompatActivity {
         boolean light = !"dark".equals(theme);
         runOnUiThread(() -> {
             setLightBars(light);
-            webView.setBackgroundColor(Color.parseColor(light ? "#F7F5F0" : "#17150F"));
+            int bg = Color.parseColor(light ? "#F7F5F0" : "#17150F");
+            webView.setBackgroundColor(bg);
+            // 状态栏区域露的是 root 背景，必须跟着换色
+            root.setBackgroundColor(bg);
         });
     }
 

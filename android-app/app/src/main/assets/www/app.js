@@ -124,6 +124,12 @@
   var viewCutId = null;      // 编辑态下视图临时截断到哪条消息（不含）
 
   function newSession() {
+    // 当前会话还没说过话就复用它——否则每点一次 + 就攒一个空会话，抽屉被刷屏
+    var cur = currentSession();
+    if (cur && (!cur.nodes || !cur.nodes.length)) {
+      messages = [];
+      return cur;
+    }
     var s = {
       id: 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: '新对话',
@@ -357,7 +363,15 @@
     settingsMask: $('#settingsMask'),
     toast: $('#toast'),
     toBottom: $('#btnToBottom'),
-    sessionSearch: $('#sessionSearch')
+    sessionSearch: $('#sessionSearch'),
+    btnThink: $('#btnThink'),
+    btnSearch: $('#btnSearch'),
+    btnEditCancel: $('#btnEditCancel'),
+    composer: $('#composer'),
+    sourcesSheet: $('#sourcesSheet'),
+    sourcesMask: $('#sourcesMask'),
+    sourcesBody: $('#sourcesBody'),
+    sourcesCount: $('#sourcesCount')
   };
 
   /* ---------------- 工具函数 ---------------- */
@@ -434,11 +448,17 @@
         '<p class="onboard-hint">Key 只保存在本机，不会上传到任何第三方。</p>') +
       '<div class="suggests"></div>';
 
+    var SUGGEST_ICONS = {
+      news: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.3 3.8 5.2 3.8 8.5s-1.3 6.2-3.8 8.5c-2.5-2.3-3.8-5.2-3.8-8.5S9.5 5.8 12 3.5Z"/>',
+      link: '<path d="M10 13.5a3.6 3.6 0 0 0 5.1 0l2.2-2.2a3.6 3.6 0 0 0-5.1-5.1L11 7.4"/><path d="M14 10.5a3.6 3.6 0 0 0-5.1 0L6.7 12.7a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2"/>',
+      doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16.5h4"/>',
+      code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M13 4l-2 16"/>'
+    };
     var data = [
-      ['查最新消息', '今天有什么值得关注的科技新闻？'],
-      ['读一篇网页', '帮我总结 https://nodejs.org/en/blog 最近一篇文章'],
-      ['解析文档', '（点左下角 + 选择一个 PDF 或 Word 文件）'],
-      ['写点代码', '用 Node.js 写一个带重试和超时的 fetch 封装']
+      ['news', '查最新消息', '今天有什么值得关注的科技新闻？', '汇总今日要闻并附来源'],
+      ['link', '读一篇网页', '帮我总结 https://nodejs.org/en/blog 最近一篇文章', '丢个链接，提炼重点'],
+      ['doc', '解析文档', '', '点左下角 + 选 PDF / Word / 图片'],
+      ['code', '写点代码', '用 Node.js 写一个带重试和超时的 fetch 封装', '写出可以直接用的实现']
     ];
     var onboard = wrap.querySelector('.onboard-btn');
     if (onboard) {
@@ -446,12 +466,16 @@
     }
 
     var box = wrap.querySelector('.suggests');
-    data.forEach(function (pair) {
+    data.forEach(function (item) {
       var b = el('button', 'suggest');
-      b.innerHTML = '<b>' + MD.esc(pair[0]) + '</b>' + MD.esc(pair[1]);
+      b.innerHTML =
+        '<span class="s-ico"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+        SUGGEST_ICONS[item[0]] + '</svg></span>' +
+        '<span class="s-main"><b>' + MD.esc(item[1]) + '</b><span>' + MD.esc(item[3]) + '</span></span>' +
+        '<span class="s-go" aria-hidden="true">›</span>';
       b.addEventListener('click', function () {
-        if (pair[0] === '解析文档') { pickFile(); return; }
-        E.input.value = pair[1];
+        if (item[0] === 'doc') { pickFile(); return; }
+        E.input.value = item[2];
         autosize();
         updateSend();
         send();
@@ -468,16 +492,19 @@
     if (w) w.remove();
     var msg = el('div', 'msg user' + (animate === false ? ' no-anim' : ''));
     if (nodeId) msg.dataset.id = nodeId;
-    var role = el('div', 'msg-role', '你');
+    var body = el('div', 'msg-body');
     var bubble = el('div', 'bubble', text || '');
-    msg.appendChild(role);
-    msg.appendChild(bubble);
     var uActs = el('div', 'msg-actions user-actions');
-    var btnEdit = el('button', 'act-edit', '编辑');
+    var btnEdit = el('button', 'act-edit');
+    btnEdit.type = 'button';
+    btnEdit.setAttribute('aria-label', '编辑提问');
+    btnEdit.title = '编辑这条提问（发送后保留旧版本）';
+    btnEdit.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17Z"/><path d="m14.5 7 3 3"/></svg>';
     uActs.appendChild(btnEdit);
-    msg.appendChild(uActs);
+    body.appendChild(bubble);
+    body.appendChild(uActs);
     if (files && files.length) {
-      var box = el('div', 'attach-strip');
+      var box = el('div', 'msg-files');
       files.forEach(function (f) {
         var chip = el('div', 'chip');
         chip.innerHTML = '<span class="c-name"></span><span class="c-size"></span>';
@@ -485,8 +512,9 @@
         chip.querySelector('.c-size').textContent = f.imageDropped ? '已省略' : fmtSize(f.size);
         box.appendChild(chip);
       });
-      msg.appendChild(box);
+      body.appendChild(box);
     }
+    msg.appendChild(body);
     E.messages.appendChild(msg);
     return msg;
   }
@@ -497,64 +525,143 @@
 
     var msg = el('div', 'msg assistant' + (animate === false ? ' no-anim' : ''));
     if (nodeId) msg.dataset.id = nodeId;
-    var role = el('div', 'msg-role');
-    role.innerHTML = '<span>DeepSeek</span><span class="model-tag">' + MD.esc((model || '').replace('deepseek-', '')) + '</span>';
+    msg.innerHTML =
+      '<div class="msg-avatar" aria-hidden="true"><svg viewBox="0 0 28 28" width="18" height="18" fill="none">' +
+      '<path d="M4.5 17.5c0-5.2 4.2-9.4 9.4-9.4 3.9 0 7.3 2.4 8.7 5.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '<path d="M4.5 17.5c2.6 0 3.7 1.7 5 3.1 1.4 1.4 3 2.6 5.7 2.6 3.1 0 5.1-1.6 6.3-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+      '<circle cx="19.6" cy="11.4" r="1.3" fill="currentColor"/></svg></div>' +
+      '<div class="msg-body">' +
+      '<div class="msg-role"><span>DeepSeek</span><span class="model-tag"></span></div>' +
+      '<div class="process-box open" hidden>' +
+      '<button class="process-head" type="button">' +
+      '<span class="spinner"></span>' +
+      '<span class="p-title">思考中…</span>' +
+      '<span class="p-meta"></span>' +
+      '<svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>' +
+      '<span class="p-more">收起</span>' +
+      '</button>' +
+      '<div class="process-body">' +
+      '<div class="reasoning" hidden>' +
+      '<button class="reasoning-head" type="button">' +
+      '<span class="r-title">思考过程</span>' +
+      '<svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>' +
+      '<span class="r-more">收起</span>' +
+      '</button>' +
+      '<div class="reasoning-body"></div>' +
+      '</div>' +
+      '<div class="tool-stack"></div>' +
+      '</div>' +
+      '</div>' +
+      '<div class="prose"><p><span class="caret-blink"></span></p></div>' +
+      '<div class="sources-slot"></div>' +
+      '<div class="msg-actions">' +
+      '<button class="act-copy" type="button" title="复制回答" aria-label="复制回答">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>' +
+      '<span class="act-label">复制</span></button>' +
+      '<button class="act-regen" type="button" title="重新生成（保留旧版本）" aria-label="重新生成">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-1.5 6.5"/><path d="M20 5v6h-6"/></svg>' +
+      '<span class="act-label">重新生成</span></button>' +
+      '<button class="act-cont" type="button" title="接着写" aria-label="继续写" hidden>' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' +
+      '<span class="act-label">继续写</span></button>' +
+      '</div>' +
+      '</div>';
 
-    var reasonSlot = el('div');
-    var toolStack = el('div', 'tool-stack');
-    var prose = el('div', 'prose');
-    prose.innerHTML = '<p><span class="caret-blink"></span></p>';
-    var actions = el('div', 'msg-actions');
-    var btnCopy = el('button', null, '复制');
-    var btnRegen = el('button', null, '重新生成');
-    var btnContinue = el('button', null, '继续写');
-    btnContinue.hidden = true;
-    actions.appendChild(btnCopy);
-    actions.appendChild(btnRegen);
-    actions.appendChild(btnContinue);
-
-    msg.appendChild(role);
-    msg.appendChild(reasonSlot);
-    msg.appendChild(toolStack);
-    msg.appendChild(prose);
-    msg.appendChild(actions);
+    var roleTag = msg.querySelector('.model-tag');
+    roleTag.textContent = (model || '').replace('deepseek-', '');
+    var processBox = msg.querySelector('.process-box');
+    var processHead = processBox.querySelector('.process-head');
+    var processTitle = processBox.querySelector('.p-title');
+    var processMeta = processBox.querySelector('.p-meta');
+    var processMore = processBox.querySelector('.p-more');
+    var toolStack = processBox.querySelector('.tool-stack');
+    var reasonEl = processBox.querySelector('.reasoning');
+    var reasonHead = reasonEl.querySelector('.reasoning-head');
+    var reasonBody = reasonEl.querySelector('.reasoning-body');
+    var reasonMore = reasonEl.querySelector('.r-more');
+    var prose = msg.querySelector('.prose');
+    var sourcesSlot = msg.querySelector('.sources-slot');
+    var actions = msg.querySelector('.msg-actions');
+    var btnCopy = actions.querySelector('.act-copy');
+    var btnRegen = actions.querySelector('.act-regen');
+    var btnContinue = actions.querySelector('.act-cont');
     E.messages.appendChild(msg);
 
     var raw = initialContent || '';
     var think = initialReasoning || '';
-    var reasonEl = null, reasonBody = null, reasonTitle = null;
     var dirty = false, timer = null;
     var assistantRecord = null;
+    var toolCount = 0;
     var api = { node: msg, done: false };
 
-    if (toolLog && toolLog.length) {
-      toolLog.forEach(function (t) { addToolCard(toolStack, t); });
+    processHead.addEventListener('click', function () {
+      processBox.classList.toggle('open');
+      processMore.textContent = processBox.classList.contains('open') ? '收起' : '展开';
+    });
+    reasonHead.addEventListener('click', function () {
+      reasonEl.classList.toggle('open');
+      reasonMore.textContent = reasonEl.classList.contains('open') ? '收起' : '展开';
+    });
+
+    function updateProcessHeader(finished) {
+      var hasThink = !!think;
+      if (!finished) {
+        if (toolCount > 0 && hasThink) processTitle.textContent = '正在思考与检索…';
+        else if (toolCount > 0) processTitle.textContent = '正在执行操作…';
+        else processTitle.textContent = '思考中…';
+        processMeta.textContent = toolCount > 0 ? toolCount + ' 步' : '';
+        return;
+      }
+      if (hasThink && toolCount > 0) {
+        processTitle.textContent = '思考与执行过程';
+        processMeta.textContent = toolCount + ' 步操作';
+      } else if (toolCount > 0) {
+        processTitle.textContent = '执行过程';
+        processMeta.textContent = toolCount + ' 步操作';
+      } else if (hasThink) {
+        processTitle.textContent = '思考过程';
+        processMeta.textContent = '';
+      }
+    }
+
+    /** 流结束 / 历史消息统一收尾：折叠两层面板、去 spinner、更新摘要 */
+    function finalizeProcess() {
+      if (processBox.hidden || processBox.dataset.finished) return;
+      processBox.dataset.finished = '1';
+      var sp = processHead.querySelector('.spinner');
+      if (sp) sp.remove();
+      processBox.classList.remove('open');
+      processMore.textContent = '展开';
+      if (!reasonEl.hidden) {
+        reasonEl.classList.remove('open');
+        reasonMore.textContent = '展开';
+      }
+      updateProcessHeader(true);
     }
 
     function ensureReasoning() {
-      if (reasonEl) return;
-      reasonEl = el('div', 'reasoning');
-      reasonEl.innerHTML =
-        '<button class="reasoning-head" type="button">' +
-        '<span class="spinner"></span>' +
-        '<span class="r-title">思考中</span>' +
-        '<span class="r-state"></span>' +
-        '<svg class="caret" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>' +
-        '</button><div class="reasoning-body"></div>';
-      reasonBody = reasonEl.querySelector('.reasoning-body');
-      reasonTitle = reasonEl.querySelector('.r-title');
-      reasonEl.querySelector('.reasoning-head').addEventListener('click', function () {
-        reasonEl.classList.toggle('open');
-      });
-      reasonSlot.appendChild(reasonEl);
+      processBox.hidden = false;
+      if (reasonEl.hidden) {
+        reasonEl.hidden = false;
+        reasonEl.classList.add('open');
+        reasonMore.textContent = '收起';
+      }
+      updateProcessHeader(false);
     }
 
     api.setReasoning = function (text) {
       think = text;
       ensureReasoning();
-      if (!reasonEl.classList.contains('open')) reasonEl.classList.add('open');
       reasonBody.textContent = think;
       reasonBody.scrollTop = reasonBody.scrollHeight;
+    };
+
+    /** 工具卡片统一走这里：计入步数并确保过程面板可见 */
+    api.addTool = function (tool) {
+      toolCount += 1;
+      processBox.hidden = false;
+      updateProcessHeader(false);
+      return addToolCard(toolStack, tool);
     };
 
     api.setContent = function (text) {
@@ -566,6 +673,7 @@
     };
 
     var anns = null;
+    var srcList = null;
 
     function flush() {
       timer = null;
@@ -573,7 +681,12 @@
       var html = MD.render(raw);
       prose.__raw = raw;
       prose.innerHTML = html || '<p><span class="caret-blink"></span></p>';
-      if (anns && anns.length) applyAnnotations(prose, anns);
+      if (anns && anns.length) {
+        srcList = applyAnnotations(prose, anns, function (idx) {
+          openSourcesDrawer(srcList, idx);
+        });
+        renderSourcesTrigger(sourcesSlot, srcList);
+      }
       if (state_done()) {
         var c = prose.querySelector('.caret-blink');
         if (c) c.remove();
@@ -594,14 +707,7 @@
       if (dirty || timer) { clearTimeout(timer); timer = null; flush(); }
       var c = prose.querySelector('.caret-blink');
       if (c) c.remove();
-      if (reasonEl) {
-        var sp = reasonEl.querySelector('.spinner');
-        if (sp) sp.remove();
-        var st = reasonEl.querySelector('.r-state');
-        if (st) st.textContent = '已折叠';
-        if (reasonTitle) reasonTitle.textContent = '思考过程';
-        reasonEl.classList.remove('open');
-      }
+      finalizeProcess();
     };
 
     /** 红色错误块（请求失败） */
@@ -616,7 +722,7 @@
         resendLast();
       });
       box.appendChild(retry);
-      msg.insertBefore(box, actions);
+      actions.parentNode.insertBefore(box, actions);
     };
 
     /** 中性提示块（截断 / 中止 / 内容拦截），不丢已生成内容 */
@@ -624,10 +730,11 @@
       var c = prose.querySelector('.caret-blink');
       if (c) c.remove();
       var box = el('div', 'notice-box' + (kind === 'warn' ? ' warn' : ''), message);
-      msg.insertBefore(box, actions);
+      actions.parentNode.insertBefore(box, actions);
     };
 
     api.tools = toolStack;
+    api.resetTools = function () { toolCount = 0; toolStack.innerHTML = ''; };
     api.getContent = function () { return raw; };
     api.getReasoning = function () { return think; };
 
@@ -663,6 +770,9 @@
       btnContinue.hidden = !(rec && rec.truncated);
     };
 
+    if (toolLog && toolLog.length) {
+      toolLog.forEach(function (t) { api.addTool(t); });
+    }
     if (think) api.setReasoning(think);
     if (raw) api.setContent(raw);
     return api;
@@ -755,7 +865,7 @@
     };
   }
 
-  function applyAnnotations(container, anns) {
+  function applyAnnotations(container, anns, onOpenSource) {
     var seen = {}, sources = [];
     (anns || []).forEach(function (raw) {
       var a = normCite(raw);
@@ -763,7 +873,7 @@
       var k = a.url;
       if (!seen[k]) { seen[k] = sources.length + 1; sources.push(a); }
     });
-    if (!sources.length) return;
+    if (!sources.length) return sources;
 
     // 官方给的是「模型原始输出」的码点偏移，里面含换行、** 、表格竖线这些
     // 渲染时被吃掉的字符。所以不能要求 DOM 文本与原文等长，
@@ -790,8 +900,7 @@
       map[di] = ri; ri++; matched++;
     }
     if (!matched || matched < domChars.length * 0.85) {
-      appendSources(container, sources);
-      return;
+      return sources;
     }
 
     (anns || [])
@@ -820,32 +929,69 @@
         sup.className = 'cite';
         sup.textContent = seen[a.url];
         sup.title = a.title || a.url;
-        var cu = safeUrl(a.url);
-        if (cu) sup.addEventListener('click', function () { openLink(cu); });
+        (function (num) {
+          sup.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (onOpenSource) onOpenSource(num);
+          });
+        })(seen[a.url]);
 
         at.node.nodeValue = before;
         par.insertBefore(sup, at.node.nextSibling);
         if (after) par.insertBefore(document.createTextNode(after), sup.nextSibling);
       });
 
-    appendSources(container, sources);
+    return sources;
   }
 
-  function appendSources(container, sources) {
-    var box = el('div', 'sources');
-    box.innerHTML = '<div class="sources-head">来源</div>';
-    sources.forEach(function (a, i) {
-      var row = el('a', 'source-row');
-      var su = safeUrl(a.url);
-      if (su) { row.href = su; row.target = '_blank'; row.rel = 'noopener'; }
-      row.innerHTML = '<span class="sd-idx">' + (i + 1) + '</span>' +
-        '<span class="sd-main"><span class="sd-title"></span><span class="sd-url"></span></span>';
-      row.querySelector('.sd-title').textContent = a.title || a.url;
-      try { row.querySelector('.sd-url').textContent = new URL(a.url).hostname; }
-      catch (e) { row.querySelector('.sd-url').textContent = a.url; }
-      box.appendChild(row);
+  /** 回答末尾的来源入口胶囊：点开右侧抽屉，不在正文里铺链接 */
+  function renderSourcesTrigger(slot, sources) {
+    slot.innerHTML = '';
+    if (!sources || !sources.length) return;
+    var btn = el('button', 'sources-trigger');
+    btn.type = 'button';
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13.5a3.6 3.6 0 0 0 5.1 0l2.2-2.2a3.6 3.6 0 0 0-5.1-5.1L11 7.4"/><path d="M14 10.5a3.6 3.6 0 0 0-5.1 0L6.7 12.7a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2"/></svg>' +
+      '<span>参考来源 · ' + sources.length + '</span>' +
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>';
+    btn.addEventListener('click', function () { openSourcesDrawer(sources, null); });
+    slot.appendChild(btn);
+  }
+
+  function openSourcesDrawer(sources, highlightNum) {
+    if (!sources || !sources.length) return;
+    E.sourcesCount.textContent = '· ' + sources.length + ' 条';
+    E.sourcesBody.innerHTML = '';
+    var hitCard = null;
+    sources.forEach(function (c, idx) {
+      var num = idx + 1;
+      var safe = safeUrl(c.url);
+      var card = safe ? el('a', 'source-card') : el('div', 'source-card');
+      if (safe) { card.href = safe; card.target = '_blank'; card.rel = 'noopener'; }
+      if (highlightNum === num) { card.classList.add('hit'); hitCard = card; }
+      card.appendChild(el('span', 'source-idx', String(num)));
+      var main = el('div', 'source-main');
+      main.appendChild(el('span', 'source-title', c.title || c.url));
+      var host = c.url;
+      try { host = new URL(c.url).hostname; } catch (e) {}
+      main.appendChild(el('span', 'source-url', host));
+      card.appendChild(main);
+      E.sourcesBody.appendChild(card);
     });
-    container.appendChild(box);
+    E.sourcesMask.hidden = false;
+    E.sourcesSheet.classList.add('open');
+    E.sourcesSheet.setAttribute('aria-hidden', 'false');
+    if (hitCard) {
+      requestAnimationFrame(function () {
+        hitCard.scrollIntoView({ block: 'nearest' });
+      });
+    }
+  }
+
+  function closeSourcesDrawer() {
+    E.sourcesMask.hidden = true;
+    E.sourcesSheet.classList.remove('open');
+    E.sourcesSheet.setAttribute('aria-hidden', 'true');
   }
 
   /* ---------------- 工具卡片 ---------------- */
@@ -974,6 +1120,7 @@
     viewCutId = nodeId;
     renderMessages();
     E.hint.textContent = '修改这条提问，发送后成为新版本，旧回答保留（‹ › 可切回）';
+    E.btnEditCancel.hidden = false;
     E.input.focus();
     try { E.input.setSelectionRange(E.input.value.length, E.input.value.length); } catch (e) {}
     // 滚到输入框附近
@@ -988,6 +1135,7 @@
     autosize();
     updateSend();
     E.hint.textContent = '内容由 DeepSeek 生成，请注意核实';
+    E.btnEditCancel.hidden = true;
     renderMessages();
   }
 
@@ -1106,6 +1254,7 @@
     E.settingsMask.hidden = true;
     E.actionSheet.hidden = true;
     E.actionMask.hidden = true;
+    closeSourcesDrawer();
   }
 
   function showActions(title, items) {
@@ -1707,7 +1856,7 @@
       content = '';
       reasoning = '';
       toolLog.length = 0;
-      handle.tools.innerHTML = '';
+      handle.resetTools();
       toolHandles = {};
       annotations = null;
       serverCalls = null;
@@ -1866,7 +2015,7 @@
           var call = ev.call || {};
           var desc = describeCall(call);
           var key = ev.step + ':' + (call.index || 0);
-          var h = addToolCard(handle.tools, { kind: desc.kind, label: desc.label, status: 'running' });
+          var h = handle.addTool({ kind: desc.kind, label: desc.label, status: 'running' });
           toolHandles[key] = h;
           toolLog.push({ kind: desc.kind, label: desc.label, status: 'running' });
           E.hint.textContent = desc.label + '…';
@@ -1877,7 +2026,7 @@
           var hh = toolHandles[key2];
           if (!hh) {
             // 没有收到 start（例如中途接管），直接补一张
-            hh = addToolCard(handle.tools, { kind: desc2.kind, label: desc2.label, status: 'running' });
+            hh = handle.addTool({ kind: desc2.kind, label: desc2.label, status: 'running' });
             toolHandles[key2] = hh;
             toolLog.push({ kind: desc2.kind, label: desc2.label, status: 'running' });
           }
@@ -2001,6 +2150,14 @@
     $('#modelName').textContent = label;
   }
 
+  /** 输入区的深度思考/联网 pill 与设置项是同一个状态，双向同步 */
+  function syncPills() {
+    E.btnThink.setAttribute('aria-pressed', String(!!settings.thinking));
+    E.btnSearch.setAttribute('aria-pressed', String(!!settings.webSearch));
+    E.btnThink.title = '深度思考：' + (settings.thinking ? '开启' : '关闭');
+    E.btnSearch.title = '联网搜索：' + (settings.webSearch ? '开启' : '关闭');
+  }
+
   /* ---------------- URL 安全 ---------------- */
   /** 只放行 http/https。api 返回的 sources/page/图片地址一律先过这里，
       否则模型可以返回 javascript: 或 data: 注入。 */
@@ -2065,6 +2222,25 @@
       else send();
     });
 
+    // 键盘弹起期间锁死页面滚动：打字和拉动只能二选一，
+    // 否则下拉会把整个 .app 拖偏，输入框脱离键盘上沿。
+    // 判定用「键盘实际可见 + 焦点在输入框」——WebView 里按返回键
+    // 收键盘输入框仍持有 DOM focus，单靠 focus 状态不可靠。
+    function updateTypingLock() {
+      var vv = window.visualViewport;
+      var kbOpen = vv ? (window.innerHeight - vv.height) > 100 : false;
+      var a = document.activeElement;
+      var field = a && a.matches && a.matches('input, textarea');
+      document.body.classList.toggle('typing', !!(kbOpen && field));
+    }
+    document.addEventListener('focusin', updateTypingLock);
+    document.addEventListener('focusout', function () { setTimeout(updateTypingLock, 0); });
+    window.addEventListener('safearea', updateTypingLock);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateTypingLock);
+      window.visualViewport.addEventListener('scroll', updateTypingLock);
+    }
+
     $('#btnMenu').addEventListener('click', function () { openSheet('sessions'); });
     $('#btnCloseSheet').addEventListener('click', closeAll);
     E.sheetMask.addEventListener('click', closeAll);
@@ -2092,6 +2268,26 @@
     $('#btnAttach').addEventListener('click', pickFile);
     E.actionMask.addEventListener('click', closeAll);
     $('#actionCancel').addEventListener('click', closeAll);
+
+    // 深度思考 / 联网搜索 pill：改的是设置里的同一个开关
+    E.btnThink.addEventListener('click', function () {
+      settings.thinking = !settings.thinking;
+      saveSettings();
+      syncPills();
+    });
+    E.btnSearch.addEventListener('click', function () {
+      settings.webSearch = !settings.webSearch;
+      saveSettings();
+      syncPills();
+      toast(settings.webSearch ? '联网搜索已开启' : '联网搜索已关闭');
+    });
+
+    // 来源抽屉
+    E.sourcesMask.addEventListener('click', closeAll);
+    $('#btnCloseSources').addEventListener('click', closeAll);
+
+    // 编辑态的「取消」
+    E.btnEditCancel.addEventListener('click', cancelEdit);
 
     $('#btnModel').addEventListener('click', function () {
       showActions('选择模型', [
@@ -2126,6 +2322,7 @@
       settings.autoTitle = $('#swAutoTitle').checked;
       saveSettings();
       updateModelName();
+      syncPills();
       closeAll();
       toast('设置已保存');
       if (!messages.length) renderWelcome();
@@ -2231,6 +2428,7 @@
     window.__handleBack = function () {
       if (!E.actionSheet.hidden) { closeAll(); return true; }
       if (!E.settings.hidden) { closeAll(); return true; }
+      if (E.sourcesSheet.classList.contains('open')) { closeAll(); return true; }
       if (!E.sheet.hidden) { closeAll(); return true; }
       // 编辑态优先退出编辑，而不是直接关 App
       if (editingId) { cancelEdit(); return true; }
@@ -2247,6 +2445,7 @@
   /* ---------------- 启动 ---------------- */
   function init() {
     updateModelName();
+    syncPills();
     bind();
     autosize();
     updateSend();
@@ -2258,6 +2457,15 @@
       ensureTree(sessions[i]);
     }
     if (migrated) { try { LS.set('sessions', sessions); } catch (e) {} }
+
+    // 老版本点 + 攒下的空会话（没发过消息的）清掉，只留当前草稿
+    var kept = sessions.filter(function (s) {
+      return s.id === currentId || (s.nodes && s.nodes.length);
+    });
+    if (kept.length !== sessions.length) {
+      sessions = kept;
+      try { LS.set('sessions', sessions); } catch (e) {}
+    }
 
     if (!currentId && !sessions.length) newSession();
     if (!currentId && sessions.length) currentId = sessions[0].id;
