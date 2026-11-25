@@ -5,6 +5,13 @@
   var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ESC[c]; }); }
 
+  var hasTemml = typeof temml !== 'undefined' && temml && typeof temml.renderToString === 'function';
+  function mml(tex, display) {
+    if (!hasTemml) return null;
+    try { return temml.renderToString(tex, { displayMode: !!display }); }
+    catch (e) { return null; }
+  }
+
   var KW = ('const let var function return if else for while do break continue class extends new this super ' +
     'import from export default async await try catch finally throw typeof instanceof in of delete void yield ' +
     'static get set switch case default null undefined true false NaN Infinity ' +
@@ -54,6 +61,17 @@
       codes.push('<code>' + esc(c) + '</code>');
       return '\u0000' + (codes.length - 1) + '\u0000';
     });
+    var maths = [];
+    function grabMath(re, d) {
+      s = s.replace(re, function (m, tex) {
+        maths.push({ raw: m, tex: tex, d: !!d });
+        return '\u0001' + (maths.length - 1) + '\u0001';
+      });
+    }
+    grabMath(/\\\(((?:[^\\]|\\(?!\)))+?)\\\)/g);
+    grabMath(/\\\[((?:[^\]]|\](?!\\))+?)\\\]/g, 1);
+    grabMath(/\$\$([^$\n]+?)\$\$/g, 1);
+    grabMath(/\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\d)/g);
     s = esc(s);
     s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function (_, alt, url) {
       var u = sanitizeUrl(url);
@@ -77,6 +95,13 @@
       .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>')
       .replace(/~~([^~]+)~~/g, '<del>$1</del>');
     s = s.replace(/\u0000(\d+)\u0000/g, function (_, i) { return codes[Number(i)] || ''; });
+    s = s.replace(new RegExp(String.fromCharCode(1) + "([0-9]+)" + String.fromCharCode(1), "g"), function (_, i) {
+      var it = maths[Number(i)];
+      if (!it) return '';
+      var m = mml(it.tex, it.d);
+      return m ? '<span class="math' + (it.d ? ' math-block' : '') + '">' + m + '</span>'
+               : '<code class="math-raw">' + esc(it.raw) + '</code>';
+    });
     return s;
   }
 
@@ -140,6 +165,30 @@
         continue;
       }
 
+      // 块级数学公式 $$...$$ 或 \[...\]
+      var mb = /^\s*(\$\$|\\\[)([\s\S]*)$/.exec(line);
+      if (mb) {
+        var close = mb[1] === '$$' ? '$$' : '\\]';
+        var body = mb[2];
+        var ci = body.lastIndexOf(close);
+        if (body.trim() && ci > 0 && body.slice(ci) === close) {
+          body = body.slice(0, ci); i++;
+        } else {
+          var mbuf = [body]; i++;
+          while (i < lines.length) {
+            var ml = lines[i], mc = ml.indexOf(close);
+            if (mc >= 0) { mbuf.push(ml.slice(0, mc)); i++; break; }
+            mbuf.push(ml); i++;
+          }
+          body = mbuf.join('\n');
+        }
+        var mtex = body.trim();
+        var mm = mml(mtex, true);
+        html.push(mm ? '<div class="math math-block">' + mm + '</div>'
+                     : '<pre class="math-raw">' + esc(mtex) + '</pre>');
+        continue;
+      }
+
       // 表格
       if (line.indexOf('|') >= 0 && i + 1 < lines.length &&
           /^\s*\|?[\s:-]*-[\s|:-]*$/.test(lines[i + 1]) && lines[i + 1].indexOf('-') >= 0) {
@@ -188,6 +237,7 @@
              !/^(#{1,6})\s/.test(lines[i]) &&
              !/^\s*>/.test(lines[i]) &&
              !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) &&
+             !/^\s*(\$\$|\\\[)/.test(lines[i]) &&
              !/^\s*([-*_])(\s*\1){2,}\s*$/.test(lines[i])) {
         para.push(lines[i]); i++;
       }

@@ -1,12 +1,19 @@
 package com.arena.deepseekchat;
 
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -14,6 +21,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -39,6 +48,9 @@ public class MainActivity extends AppCompatActivity {
     private NativeBridge bridge;
     private TextView errorView;
     private FrameLayout root;
+    private View splash;
+    private long splashAt;
+    private boolean splashGone;
     private float safeTop, safeRight, safeBottom, safeLeft;
     private boolean hasInsets;
 
@@ -48,8 +60,12 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
+        boolean night = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        int appBg = Color.parseColor(night ? "#17150F" : "#F7F5F0");
+
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.parseColor("#F7F5F0"));
+        webView.setBackgroundColor(appBg);
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
 
         WebSettings s = webView.getSettings();
@@ -137,6 +153,7 @@ public class MainActivity extends AppCompatActivity {
                 if (errorView != null && url != null && url.startsWith("about:")) return;
                 if (errorView != null) errorView.setVisibility(View.GONE);
                 injectSafeArea();
+                hideSplash();
             }
 
             @Override
@@ -163,17 +180,113 @@ public class MainActivity extends AppCompatActivity {
         errorView.setVisibility(View.GONE);
 
         root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor("#F7F5F0"));
+        root.setBackgroundColor(appBg);
         root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(errorView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         setContentView(root);
 
+        buildSplash(night);
+
         applyInsets(root);
-        setLightBars(true);
+        setLightBars(!night);
 
         webView.loadUrl(START_URL);
+    }
+
+    /**
+     * 启动画面：纸墨底色 + 鹈鹕线稿呼吸浮现 + 细线加载条。
+     * 页面 onPageFinished 后淡出交给 WebView，至少展示 900ms 保证动画可读。
+     */
+    private void buildSplash(boolean night) {
+        float d = getResources().getDisplayMetrics().density;
+        int accent = Color.parseColor(night ? "#CD8055" : "#9E5330");
+        int dim = Color.parseColor(night ? "#A29A8B" : "#6A6358");
+
+        FrameLayout box = new FrameLayout(this);
+        box.setBackgroundColor(Color.parseColor(night ? "#17150F" : "#F7F5F0"));
+        box.setClickable(true);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER);
+        box.addView(col, colLp);
+
+        ImageView mark = new ImageView(this);
+        mark.setImageResource(R.drawable.ic_launcher_foreground);
+        col.addView(mark, new LinearLayout.LayoutParams((int) (96 * d), (int) (96 * d)));
+
+        TextView name = new TextView(this);
+        name.setText(R.string.app_name);
+        name.setTextColor(dim);
+        name.setTextSize(15);
+        name.setLetterSpacing(0.18f);
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nameLp.topMargin = (int) (10 * d);
+        col.addView(name, nameLp);
+
+        // 细线加载条：浅色轨道 + 一段滑动的品牌色
+        int trackW = (int) (52 * d), trackH = (int) (3 * d), segW = (int) (20 * d);
+        GradientDrawable trackBg = new GradientDrawable();
+        trackBg.setColor(night ? Color.parseColor("#33CD8055") : Color.parseColor("#229E5330"));
+        trackBg.setCornerRadius(trackH);
+        GradientDrawable segBg = new GradientDrawable();
+        segBg.setColor(accent);
+        segBg.setCornerRadius(trackH);
+        FrameLayout track = new FrameLayout(this);
+        track.setBackground(trackBg);
+        View seg = new View(this);
+        seg.setBackground(segBg);
+        track.addView(seg, new FrameLayout.LayoutParams(segW, trackH));
+        LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(trackW, trackH);
+        trackLp.topMargin = (int) (26 * d);
+        col.addView(track, trackLp);
+
+        // 入场：图标缩放浮现 → 名字上浮 → 加载条淡入并开始循环
+        mark.setAlpha(0f);
+        mark.setScaleX(0.84f);
+        mark.setScaleY(0.84f);
+        mark.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(430).setInterpolator(new DecelerateInterpolator()).start();
+        name.setAlpha(0f);
+        name.setTranslationY(10 * d);
+        name.animate().alpha(1f).translationY(0f)
+                .setStartDelay(150).setDuration(380)
+                .setInterpolator(new DecelerateInterpolator()).start();
+        track.setAlpha(0f);
+        track.animate().alpha(1f).setStartDelay(280).setDuration(300).start();
+        ValueAnimator loop = ValueAnimator.ofFloat(-segW, trackW);
+        loop.setDuration(1150);
+        loop.setRepeatCount(ValueAnimator.INFINITE);
+        loop.setStartDelay(320);
+        loop.setInterpolator(new AccelerateDecelerateInterpolator());
+        loop.addUpdateListener(a -> seg.setTranslationX((float) a.getAnimatedValue()));
+        loop.start();
+
+        splash = box;
+        splashAt = SystemClock.uptimeMillis();
+        root.addView(splash, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void hideSplash() {
+        if (splash == null || splashGone) return;
+        splashGone = true;
+        long wait = Math.max(0, 900 - (SystemClock.uptimeMillis() - splashAt));
+        splash.postDelayed(() -> {
+            if (splash == null) return;
+            splash.animate().alpha(0f).setDuration(300).withEndAction(() -> {
+                if (splash != null) {
+                    root.removeView(splash);
+                    splash = null;
+                }
+            }).start();
+        }, wait);
     }
 
     private void openExternal(Uri u) {

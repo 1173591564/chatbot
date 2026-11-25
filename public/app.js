@@ -63,6 +63,14 @@ function highlight(code, lang = '') {
   return out.join('');
 }
 
+const SOH = String.fromCharCode(1);
+const hasTemml = typeof temml !== 'undefined' && temml && typeof temml.renderToString === 'function';
+function mml(tex, display) {
+  if (!hasTemml) return null;
+  try { return temml.renderToString(tex, { displayMode: !!display }); }
+  catch (e) { return null; }
+}
+
 /* --- 行内元素 --- */
 function renderInline(text) {
   const codes = [];
@@ -71,6 +79,19 @@ function renderInline(text) {
     codes.push(`<code>${escapeHtml(c)}</code>`);
     return `\u0000${codes.length - 1}\u0000`;
   });
+
+  // 数学公式也先挖出来占位，避免 * ^ _ 被当成强调
+  const maths = [];
+  const grabMath = (re, d) => {
+    s = s.replace(re, (m, tex) => {
+      maths.push({ raw: m, tex, d: !!d });
+      return `${SOH}${maths.length - 1}${SOH}`;
+    });
+  };
+  grabMath(/\\\(((?:[^\\]|\\(?!\)))+?)\\\)/g);
+  grabMath(/\\\[((?:[^\]]|\](?!\\))+?)\\\]/g, 1);
+  grabMath(/\$\$([^$\n]+?)\$\$/g, 1);
+  grabMath(/\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\d)/g);
 
   s = escapeHtml(s);
 
@@ -104,6 +125,14 @@ function renderInline(text) {
 
   // 还原行内代码
   s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)] || '');
+  s = s.replace(new RegExp(SOH + '([0-9]+)' + SOH, 'g'), (_, i) => {
+    const it = maths[Number(i)];
+    if (!it) return '';
+    const m = mml(it.tex, it.d);
+    return m
+      ? `<span class="math${it.d ? ' math-block' : ''}">${m}</span>`
+      : `<code class="math-raw">${escapeHtml(it.raw)}</code>`;
+  });
   return s;
 }
 
@@ -185,6 +214,32 @@ export function renderMarkdown(src = '') {
       continue;
     }
 
+    /* 块级数学公式 $$...$$ 或 \[...\] */
+    const mb = /^\s*(\$\$|\\\[)([\s\S]*)$/.exec(line);
+    if (mb) {
+      const close = mb[1] === '$$' ? '$$' : '\\]';
+      let body = mb[2];
+      const ci = body.lastIndexOf(close);
+      if (body.trim() && ci > 0 && body.slice(ci) === close) {
+        body = body.slice(0, ci);
+        i += 1;
+      } else {
+        const mbuf = [body];
+        i += 1;
+        while (i < lines.length) {
+          const mc = lines[i].indexOf(close);
+          if (mc >= 0) { mbuf.push(lines[i].slice(0, mc)); i += 1; break; }
+          mbuf.push(lines[i]);
+          i += 1;
+        }
+        body = mbuf.join('\n');
+      }
+      const tex = body.trim();
+      const m = mml(tex, true);
+      html.push(m ? `<div class="math math-block">${m}</div>` : `<pre class="math-raw">${escapeHtml(tex)}</pre>`);
+      continue;
+    }
+
     /* 表格 */
     if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:-]*-[\s|:-]*$/.test(lines[i + 1]) && /-/.test(lines[i + 1])) {
       const parseRow = (l) =>
@@ -244,6 +299,7 @@ export function renderMarkdown(src = '') {
       !/^(#{1,6})\s/.test(lines[i]) &&
       !/^\s*>/.test(lines[i]) &&
       !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) &&
+      !/^\s*(\$\$|\\\[)/.test(lines[i]) &&
       !/^\s*([-*_])(\s*\1){2,}\s*$/.test(lines[i])
     ) {
       buf.push(lines[i]);

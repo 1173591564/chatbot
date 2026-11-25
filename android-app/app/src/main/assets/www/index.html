@@ -23,6 +23,7 @@
 </script>
 <title>DeepSeek 助手</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="Temml-Local.css">
 </head>
 <body>
 
@@ -150,6 +151,17 @@
   <button class="action-cancel" id="actionCancel">取消</button>
 </div>
 
+<!-- ============ 居中确认弹窗 ============ -->
+<div class="sheet-mask confirm-mask" id="confirmMask" hidden></div>
+<div class="confirm" id="confirmDlg" hidden>
+  <div class="confirm-title" id="confirmTitle"></div>
+  <div class="confirm-msg" id="confirmMsg"></div>
+  <div class="confirm-btns">
+    <button class="confirm-btn" id="confirmCancel" type="button">取消</button>
+    <button class="confirm-btn danger" id="confirmOk" type="button">删除</button>
+  </div>
+</div>
+
 <!-- ============ 来源抽屉（右侧滑出） ============ -->
 <div class="sheet-mask" id="sourcesMask" hidden></div>
 <aside class="sources-sheet" id="sourcesSheet" aria-hidden="true">
@@ -255,6 +267,7 @@
 
 <div class="toast" id="toast" hidden></div>
 
+<script src="temml.js"></script>
 <script src="md.js"></script>
 <script src="app.js"></script>
 </body>

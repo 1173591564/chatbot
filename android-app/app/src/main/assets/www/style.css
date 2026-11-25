@@ -32,6 +32,9 @@ html[data-theme="light"] {
   --err: #ac4033;
   --mask: rgba(20, 17, 12, .4);
   --shadow: 0 -10px 40px -18px rgba(50, 42, 30, .4);
+  --table-bd: var(--line);
+  --table-line: var(--line-soft);
+  --table-head: var(--bg-2);
   color-scheme: light;
 }
 
@@ -51,6 +54,9 @@ html[data-theme="dark"] {
   --err: #d4705f;
   --mask: rgba(0, 0, 0, .62);
   --shadow: 0 -10px 40px -12px rgba(0, 0, 0, .9);
+  --table-bd: #4a443a;
+  --table-line: #3d382e;
+  --table-head: #26231b;
   color-scheme: dark;
 }
 
@@ -370,21 +376,28 @@ html[data-theme="dark"] .tok-c { color: #6a6255; font-style: italic; }
 html[data-theme="dark"] .tok-n { color: #d3a06a; }
 html[data-theme="dark"] .tok-f { color: #8fb0c8; }
 
-.prose .table-wrap { overflow-x: auto; margin: 0 0 14px; }
-.prose table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.prose .table-wrap { overflow-x: auto; margin: 0 0 14px; border: 1px solid var(--table-bd); border-radius: var(--r); }
+.prose .math-block { margin: 10px 0 18px; padding: 4px 0; overflow-x: auto; }
+.prose math { font-size: 1.12em; }
+.prose .math { padding: 0 1px; }
+.prose pre.math-raw { white-space: pre-wrap; color: var(--text-dim); }
+.prose code.math-raw { font-style: italic; }
+.prose table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13.5px; }
 .prose th, .prose td {
-  border-bottom: 1px solid var(--line-soft);
-  padding: 7px 10px 7px 0;
+  padding: 7px 12px;
   text-align: left;
   vertical-align: top;
 }
+.prose th + th, .prose td + td { border-left: 1px solid var(--table-line); }
 .prose thead th {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--table-bd);
+  background: var(--table-head);
   font-weight: 500;
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
 }
+.prose tbody tr + tr td { border-top: 1px solid var(--table-line); }
 
 /* 思考 + 执行过程总面板：两层折叠（总面板 → 内嵌思考块） */
 .process-box {
@@ -806,6 +819,37 @@ html[data-theme="dark"] .send-btn { color: #1a1710; }
   color: var(--text-dim);
   border-top: 1px solid var(--line-soft);
 }
+
+/* 居中确认弹窗 */
+.confirm-mask { z-index: 65; }
+.confirm {
+  position: fixed;
+  left: 50%; top: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 70;
+  width: min(300px, 82vw);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 20px 18px 12px;
+  box-shadow: var(--shadow);
+  animation: popIn .18s cubic-bezier(.3,.9,.4,1);
+}
+@keyframes popIn {
+  from { transform: translate(-50%, -50%) scale(.93); opacity: 0; }
+}
+.confirm-title { font-size: 15.5px; font-weight: 600; margin-bottom: 9px; }
+.confirm-msg { font-size: 13.5px; color: var(--text-dim); line-height: 1.65; margin-bottom: 18px; word-break: break-all; }
+.confirm-btns { display: flex; justify-content: flex-end; gap: 6px; }
+.confirm-btn {
+  padding: 8px 15px;
+  font-size: 13.5px;
+  border-radius: 9px;
+  color: var(--text-dim);
+}
+.confirm-btn:active { background: var(--accent-soft); }
+.confirm-btn.danger { color: #fff; background: var(--err); }
+.confirm-btn.danger:active { filter: brightness(.92); }
 
 /* 全屏设置 */
 .fullsheet {

@@ -39,6 +39,9 @@ html[data-theme="light"] {
   --err: #ac4033;
   --shadow: 0 12px 40px -12px rgba(50, 42, 30, .28);
   --caret: #9e5330;
+  --table-bd: var(--line);
+  --table-line: var(--line-soft);
+  --table-head: var(--surface-2);
   color-scheme: light;
 }
 
@@ -61,6 +64,9 @@ html[data-theme="dark"] {
   --err: #d4705f;
   --shadow: 0 16px 50px -14px rgba(0, 0, 0, .8);
   --caret: #cd8055;
+  --table-bd: #4a443a;
+  --table-line: #3d382e;
+  --table-head: #26231b;
   color-scheme: dark;
 }
 
@@ -563,28 +569,35 @@ html[data-theme="dark"] .tok-c { color: #6a6255; font-style: italic; }
 html[data-theme="dark"] .tok-n { color: #d3a06a; }
 html[data-theme="dark"] .tok-f { color: #8fb0c8; }
 
-.prose .table-wrap { overflow-x: auto; margin: 0 0 16px; }
+.prose .table-wrap { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--table-bd); border-radius: var(--r-md); }
+.prose .math-block { margin: 10px 0 18px; padding: 4px 0; overflow-x: auto; }
+.prose math { font-size: 1.08em; }
+.prose .math { padding: 0 1px; }
+.prose pre.math-raw { white-space: pre-wrap; color: var(--text-dim); }
+.prose code.math-raw { font-style: italic; }
 .prose table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 13.2px;
   width: 100%;
   table-layout: auto;
 }
 .prose th, .prose td {
-  border-bottom: 1px solid var(--line-soft);
-  padding: 8px 14px 8px 0;
+  padding: 8px 12px;
   text-align: left;
   vertical-align: top;
 }
-.prose th:last-child, .prose td:last-child { padding-right: 0; }
+.prose th + th, .prose td + td { border-left: 1px solid var(--table-line); }
 .prose thead th {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--table-bd);
+  background: var(--table-head);
   font-weight: 500;
   font-size: 12px;
   letter-spacing: .04em;
   color: var(--text-dim);
   white-space: nowrap;
 }
+.prose tbody tr + tr td { border-top: 1px solid var(--table-line); }
 
 /* 思考过程：左侧细线 + 等宽元信息，不用色块 */
 /* 思考 + 执行过程总面板 */

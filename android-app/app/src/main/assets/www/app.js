@@ -359,6 +359,12 @@
     actionMask: $('#actionMask'),
     actionTitle: $('#actionTitle'),
     actionBody: $('#actionBody'),
+    confirmDlg: $('#confirmDlg'),
+    confirmMask: $('#confirmMask'),
+    confirmTitle: $('#confirmTitle'),
+    confirmMsg: $('#confirmMsg'),
+    confirmOk: $('#confirmOk'),
+    confirmCancel: $('#confirmCancel'),
     settings: $('#settings'),
     settingsMask: $('#settingsMask'),
     toast: $('#toast'),
@@ -1254,7 +1260,27 @@
     E.settingsMask.hidden = true;
     E.actionSheet.hidden = true;
     E.actionMask.hidden = true;
+    E.confirmDlg.hidden = true;
+    E.confirmMask.hidden = true;
     closeSourcesDrawer();
+  }
+
+  /** 只收确认弹窗自身，底下的抽屉/面板保持原状 */
+  function hideConfirm() {
+    E.confirmDlg.hidden = true;
+    E.confirmMask.hidden = true;
+  }
+
+  /** 居中确认弹窗：okLabel 为危险操作文案时配 danger 样式 */
+  function confirmBox(title, msg, okLabel, onOk) {
+    E.confirmTitle.textContent = title;
+    E.confirmMsg.textContent = msg;
+    E.confirmOk.textContent = okLabel || '确定';
+    E.confirmOk.onclick = function () { hideConfirm(); onOk(); };
+    E.confirmCancel.onclick = hideConfirm;
+    E.confirmMask.onclick = hideConfirm;
+    E.confirmDlg.hidden = false;
+    E.confirmMask.hidden = false;
   }
 
   function showActions(title, items) {
@@ -1320,17 +1346,19 @@
       del.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>';
       del.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (streaming && currentId === s.id) stopStream();
-        sessions = sessions.filter(function (x) { return x.id !== s.id; });
-        if (currentId === s.id) {
-          currentId = sessions.length ? sessions[0].id : null;
-          if (!currentId) newSession();
-          else LS.set('currentId', currentId);
-          syncMessages();
-          renderMessages();
-        }
-        persist();
-        renderSessions();
+        confirmBox('删除会话', '确定删除「' + (s.title || '新对话') + '」吗？删除后无法恢复。', '删除', function () {
+          if (streaming && currentId === s.id) stopStream();
+          sessions = sessions.filter(function (x) { return x.id !== s.id; });
+          if (currentId === s.id) {
+            currentId = sessions.length ? sessions[0].id : null;
+            if (!currentId) newSession();
+            else LS.set('currentId', currentId);
+            syncMessages();
+            renderMessages();
+          }
+          persist();
+          renderSessions();
+        });
       });
       row.appendChild(t);
       row.appendChild(time);
@@ -2271,8 +2299,13 @@
     document.addEventListener('touchstart', function (e) {
       edgeSwipe = null;
       if (e.touches.length !== 1) return;
-      if (!E.sheet.hidden || !E.settings.hidden) return;
       var t = e.touches[0];
+      // 抽屉开着：任何位置左滑收起（含遮罩区）
+      if (!E.sheet.hidden) {
+        edgeSwipe = { x: t.clientX, y: t.clientY, id: t.identifier, close: true };
+        return;
+      }
+      if (!E.settings.hidden) return;
       if (t.clientX <= 40 || t.clientX > window.innerWidth * 0.7) return;
       for (var p = e.target; p && p !== document.body; p = p.parentElement) {
         if (p.scrollWidth > p.clientWidth + 8 && p.scrollLeft > 4) return;
@@ -2286,7 +2319,12 @@
         if (t.identifier !== edgeSwipe.id) continue;
         var dx = t.clientX - edgeSwipe.x;
         var dy = t.clientY - edgeSwipe.y;
-        if (dx > 72 && dx > Math.abs(dy) * 1.5) {
+        if (edgeSwipe.close) {
+          if (dx < -72 && -dx > Math.abs(dy) * 1.5) {
+            closeAll();
+            edgeSwipe = null;
+          }
+        } else if (dx > 72 && dx > Math.abs(dy) * 1.5) {
           openSheet('sessions');
           edgeSwipe = null;
         }
