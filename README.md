@@ -98,7 +98,7 @@ android-app/            安卓 WebView 壳（assets/www/ 与网页版同一套 U
   app/src/main/java/.../     MainActivity（安全区/键盘避让/开屏动画/WebView 调试）
 scripts/                Windows 桌面启动器
   start-web.ps1         幂等启动：3000 未监听才拉 node server.js，然后开浏览器
-  launcher.exe          无窗口入口（图标内嵌），快捷方式直接指它
+  launch.vbs            无窗口入口：经系统 wscript.exe 调 start-web.ps1（无黑窗）
   make-shortcut.ps1     重建「DeepSeek Chat」桌面快捷方式
   make-icon.ps1         重新生成 pelican.ico（16/32/48/64 DIB）
 tests/
@@ -224,4 +224,4 @@ mock 支持 `MOCK_MODE=tools|text|slow|error` 三种场景，并会校验
 `scripts/` 提供一键启动：双击「DeepSeek Chat」快捷方式 →
 检测 `localhost:3000` 未监听则静默拉起 `node server.js` → 自动打开浏览器。
 重建方式见 `scripts/make-shortcut.ps1`；图标文件 `pelican.ico`（鹈鹕线稿）由
-`make-icon.ps1` 生成，快捷方式指向带内嵌图标的 `launcher.exe`，不依赖 lnk 图标字段。
+`make-icon.ps1` 生成；快捷方式目标是系统自带的 `wscript.exe`（微软签名，不触发 SmartScreen）。
