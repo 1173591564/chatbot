@@ -19,11 +19,13 @@ node server.js      # 然后打开 http://localhost:3000
 - 双模型切换：`deepseek-flash`（快，支持联网 / 文件 / 图片）/ `deepseek-v4-pro`（复杂推理，不支持联网工具）
 - **思考过程**独立成可折叠卡片实时展示（设置里开「深度思考」）
 - Markdown 渲染：标题、列表、表格、引用、代码块 + 语法高亮 + 一键复制
+- **数学公式**：Temml（LaTeX→MathML）渲染，支持 `$…$` `\(...\)` 行内、`$$…$$` `\[...\]` 块级（含多行），解析失败回退显示原文；货币写法 `$5 和 $10` 不会误判
 - 多轮上下文，会话自动命名、本地持久化，可新建 / 切换 / 删除
 - 停止生成（保留已生成内容）、重新生成、token 用量统计
 - **编辑历史提问**：任意一轮的提问都能改，改完作为新版本，旧问答原样保留
 - **分支切换**：同一位置的多个版本用 `‹ 1/2 ›` 左右翻页，重新生成也走这套（一个提问多个回答）
 - 深浅色自适应（纸 / 墨两套）
+- 每次请求自动注入当前日期，「今天 / 最新」类问题不会再瞎编
 
 **官方工具（服务端执行，模型自主决定何时用）**
 - `deepseek_web_search` —— 联网搜索，结果以卡片展示（标题 / 链接 / 摘要），可点开
@@ -89,11 +91,16 @@ server.js               HTTP 服务：REST + SSE 流式接口 + /api/files 上�
 lib/
   config.js             API Key / 系统提示词 / 各功能开关（.env + data/config.json）
   deepseek.js           流式请求 + 官方工具事件解析（server_tool_event / annotations）
-  sessions.js           会话持久化（data/sessions.json，消息树 + 分支）
-public/
-  index.html            页面骨架
-  style.css             样式
-  app.js                前端逻辑：Markdown 渲染、SSE 解析、引用角标、附件、会话管理
+  sessions.js           会话持久化（data/sessions.json，消息树 + 分支）+ 日期注入
+public/                 网页前端（index.html / style.css / app.js / temml.js）
+android-app/            安卓 WebView 壳（assets/www/ 与网页版同一套 UI）
+  app/src/main/assets/www/   前端（md.js 独立渲染器 + temml.js）
+  app/src/main/java/.../     MainActivity（安全区/键盘避让/开屏动画/WebView 调试）
+scripts/                Windows 桌面启动器
+  start-web.ps1         幂等启动：3000 未监听才拉 node server.js，然后开浏览器
+  launcher.exe          无窗口入口（图标内嵌），快捷方式直接指它
+  make-shortcut.ps1     重建「DeepSeek Chat」桌面快捷方式
+  make-icon.ps1         重新生成 pelican.ico（16/32/48/64 DIB）
 tests/
   mock-deepseek.mjs     假 DeepSeek 全家桶服务（含 /files），用于无 key 时验证全链路
 ```
@@ -188,12 +195,33 @@ mock 支持 `MOCK_MODE=tools|text|slow|error` 三种场景，并会校验
 - **文件安全**：`/api/files` 只做转发，单文件上限 100 MiB，purpose 只接受官方三个值。
 - 会话数据与配置都在 `data/` 下，直接删掉该目录即可重置。
 
-### 与安卓版的差异
+## 安卓版
+
+`android-app/` 是一个 WebView 壳，内嵌 `assets/www/` 下与网页版同设计语言的前端，
+**WebView 内直连官方 API**（不经本地服务器），API Key 存在手机本地。
+
+构建：`cd android-app && gradle assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
+
+安卓端特有的移动交互：
+
+- **原生开屏动画**：鹈鹕图标淡入 + 加载条，跟随系统深浅色，`onPageFinished` 后淡出
+- **手势**：页面中部右滑拉出会话抽屉（左缘留给系统返回），抽屉开着时左滑收起
+- 会话列表按「今天 / 更早」分组、可搜索；删除会话有居中确认弹窗防误触
+- 输入框随文字自动增高（132px 封顶），发送后收回
+- 安全区 / 键盘避让（`typing` 锁定防弹键盘顶飞布局）
+- Debug 包开了 `WebContentsDebugging`：`chrome://inspect` 可直接调 WebView
 
 | | 网页版 | 安卓版 |
 |---|---|---|
 | 联网 / 阅读 / 文件 | 浏览器 → 本机 Node 代理 → 官方 API | WebView 内直连官方 API |
 | API Key | 存在服务器 `data/config.json` | 存在手机本地（App 内设置） |
-| 引用角标 / 工具卡 / 文件上传 / 分支编辑 | 有 | 有 |
+| 引用角标 / 工具卡 / 文件上传 / 分支编辑 / 数学公式 | 有 | 有 |
 | 缓存 | 服务端自动加 `?v=<mtime>`，不用手动清 | 跟随 APK 版本 |
 | TTS / ASR / 导入导出 / Mermaid | 无 | 无 |
+
+## Windows 桌面启动器
+
+`scripts/` 提供一键启动：双击「DeepSeek Chat」快捷方式 →
+检测 `localhost:3000` 未监听则静默拉起 `node server.js` → 自动打开浏览器。
+重建方式见 `scripts/make-shortcut.ps1`；图标文件 `pelican.ico`（鹈鹕线稿）由
+`make-icon.ps1` 生成，快捷方式指向带内嵌图标的 `launcher.exe`，不依赖 lnk 图标字段。
