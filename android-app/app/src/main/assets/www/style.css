@@ -1358,13 +1358,6 @@ html[data-theme="dark"] .onboard-btn { color: #1a1710; }
   to { opacity: 1; transform: none; }
 }
 
-/* ================= 长会话性能 ================= */
-/* 屏幕外的消息跳过渲染，长对话滚动不掉帧 */
-.msg {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 140px;
-}
-
 /* ================= 历史消息不播放进入动画 ================= */
 /* 打开旧会话时整屏消息一起上浮会显得很吵，只让新消息动 */
 .msg.no-anim { animation: none; }
@@ -1397,3 +1390,78 @@ html[data-theme="dark"] .onboard-btn { color: #1a1710; }
 
 /* 触摸时不要出现蓝色高亮方块 */
 * { -webkit-tap-highlight-color: transparent; }
+
+/* ================= 原地编辑提问 ================= */
+/* 气泡本体变成编辑框：输入区透明贴在气泡里，视觉就是「原来那个框框」 */
+.msg.user.editing .msg-body { align-items: stretch; width: 88%; }
+.msg.user.editing .bubble { padding-bottom: 8px; white-space: normal; }
+.edit-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  padding: 0;
+  display: block;
+}
+.edit-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+.edit-actions button {
+  font-size: 13px;
+  padding: 7px 18px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+}
+.edit-actions .edit-send {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+/* 编辑中隐藏「编辑」铅笔按钮，下游消息变暗且不可点——发送后它们将被新版本取代 */
+.msg.user.editing .user-actions { display: none; }
+.dim-edit { opacity: .42; pointer-events: none; transition: opacity .15s; }
+
+/* ============ 丝滑优化（覆盖上方 keyframe 实现） ============ */
+/* 面板开合改为 class+transition：开/关对称，关不再是硬切 */
+.sheet, .action-sheet, .fullsheet, .confirm, .sheet-mask { animation: none; }
+
+.sheet-mask { opacity: 0; transition: opacity .22s ease; }
+.sheet-mask.open { opacity: 1; }
+
+.sheet {
+  transform: translateX(-102%);
+  transition: transform .26s cubic-bezier(.32, .72, .24, 1);
+  will-change: transform;
+}
+.sheet.open { transform: translateX(0); }
+
+.action-sheet {
+  transform: translateY(102%);
+  transition: transform .26s cubic-bezier(.32, .72, .24, 1);
+  will-change: transform;
+}
+.action-sheet.open { transform: translateY(0); }
+
+.fullsheet {
+  transform: translateY(16px);
+  opacity: 0;
+  transition: transform .24s cubic-bezier(.32, .72, .24, 1), opacity .2s ease;
+}
+.fullsheet.open { transform: translateY(0); opacity: 1; }
+
+.confirm {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.94);
+  transition: opacity .18s ease, transform .2s cubic-bezier(.3, .9, .4, 1.1);
+}
+.confirm.open {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 精确高度版 content-visibility（intrinsic size 由内联样式按实测高度给） */
+.msg.cv { content-visibility: auto; }

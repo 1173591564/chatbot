@@ -113,7 +113,8 @@
 
   /* ---------------- 会话 ---------------- */
   var sessions = LS.get('sessions', []);
-  var currentId = LS.get('currentId', null);
+  // 冷启动一律进首页（欢迎页），不恢复上次会话——点图标=新开聊，旧会话在抽屉里取
+  var currentId = null;
   var messages = [];      // 当前会话的消息（由 leafId 派生，只读视图）
   var attachments = [];   // 待发送附件
   var streaming = false;
@@ -121,7 +122,6 @@
   var msgSeq = 0;         // 节点 id 的自增序号，配合时间戳保证唯一
   var regenParentId = null;  // 「重新生成 / 继续写」时新回答要挂的父节点；null=接在末尾用户提问后
   var editingId = null;      // 正在编辑的历史提问节点 id
-  var viewCutId = null;      // 编辑态下视图临时截断到哪条消息（不含）
 
   function newSession() {
     // 当前会话还没说过话就复用它——否则每点一次 + 就攒一个空会话，抽屉被刷屏
@@ -372,7 +372,6 @@
     sessionSearch: $('#sessionSearch'),
     btnThink: $('#btnThink'),
     btnSearch: $('#btnSearch'),
-    btnEditCancel: $('#btnEditCancel'),
     composer: $('#composer'),
     sourcesSheet: $('#sourcesSheet'),
     sourcesMask: $('#sourcesMask'),
@@ -431,6 +430,51 @@
     E.toBottom.classList.toggle('show', far);
   }
 
+
+  /* ---- 提问锚定：发送后把提问固定在视口顶部，流式期间不追滚 ----
+  /* 追滚跟着 SSE 输出不停改 scrollTop，页面持续重排就是抖。改为发送时
+     一次性把提问滚到顶部，回答在下方生长；尾部补位随内容变长而缩小，
+     保证提问够得着顶部又不留多余空白。 */
+  var streamAnchor = null;
+
+  function anchorQuestion(msgEl) {
+    if (!msgEl) return;
+    // 先清掉上轮残留补位再测量——它还夹在消息中间，会污染 target
+    var old = E.messages.querySelector(".stream-spacer");
+    if (old) old.remove();
+    var sc = E.scroll;
+    var target = Math.max(0,
+      msgEl.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - 12);
+    streamAnchor = { top: target };
+    updateAnchorSpacer();
+    // 平滑滚到提问位置（一次性定位，非追滚）；用户触摸会自然中断动画
+    if (sc.scrollTo) sc.scrollTo({ top: target, behavior: 'smooth' });
+    else sc.scrollTop = target;
+    updateToBottom();
+  }
+
+  function updateAnchorSpacer() {
+    if (!streamAnchor) return;
+    var sc = E.scroll;
+    var sp = E.messages.querySelector(".stream-spacer");
+    if (!sp) {
+      sp = document.createElement("div");
+      sp.className = "stream-spacer";
+      sp.style.pointerEvents = "none";
+    }
+    // 必须在末尾：上一轮残留的补位可能夹在消息中间，appendChild 兼具移动语义
+    E.messages.appendChild(sp);
+    sp.style.height = "0px";
+    var deficit = streamAnchor.top + sc.clientHeight - sc.scrollHeight;
+    sp.style.height = Math.max(0, deficit) + "px";
+    updateToBottom();
+  }
+
+  function clearStreamAnchor() {
+    streamAnchor = null;
+    var sp = E.messages.querySelector(".stream-spacer");
+    if (sp) sp.remove();
+  }
   /* ---------------- 渲染：欢迎页 ---------------- */
   function renderWelcome() {
     E.messages.innerHTML = '';
@@ -785,14 +829,10 @@
   }
 
   function renderMessages() {
+    editSession = null;   // 任何重画都会销毁编辑 UI，状态同步置空（切会话/新会话天然取消编辑）
     E.messages.innerHTML = '';
     if (!messages.length) { renderWelcome(); return; }
     var list = messages;
-    if (viewCutId) {
-      var cut = -1;
-      for (var ci = 0; ci < messages.length; ci++) if (messages[ci].id === viewCutId) cut = ci;
-      if (cut >= 0) list = messages.slice(0, cut);
-    }
     if (!list.length) { renderWelcome(); return; }
     list.forEach(function (m) {
       if (m.role === 'user') addUserMessage(m.content, m.files, false, m.id);
@@ -806,10 +846,32 @@
       }
     });
     paintBranches();
+    applyAccurateCV();
     scrollBottom(true);
   }
 
-  /** 给「同一位置有多个版本」的消息挂上 ‹ 1/2 › */
+  /* 精确高度版 content-visibility：估计值取上一帧实测高度，
+     测量不再失真（锚定依赖准确几何），滚动省掉屏外渲染 */
+  var cvHeights = {};
+  function applyAccurateCV() {
+    var nodes = E.messages.querySelectorAll('.msg[data-id]');
+    var i, el2, id, h;
+    for (i = 0; i < nodes.length; i++) {
+      el2 = nodes[i];
+      id = el2.getAttribute('data-id');
+      h = Math.round(el2.getBoundingClientRect().height);
+      if (h > 0) cvHeights[id] = h;
+    }
+    for (i = 0; i < nodes.length; i++) {
+      el2 = nodes[i];
+      h = cvHeights[el2.getAttribute('data-id')];
+      if (h > 0) {
+        el2.classList.add('cv');
+        el2.style.containIntrinsicSize = 'auto ' + h + 'px';
+      }
+    }
+  }
+
   function paintBranches() {
     var btns = E.messages.querySelectorAll('.branch-switch');
     for (var i = 0; i < btns.length; i++) btns[i].remove();
@@ -828,8 +890,8 @@
       prev.addEventListener('click', function (e) { e.stopPropagation(); switchBranch(id, -1); });
       next.addEventListener('click', function (e) { e.stopPropagation(); switchBranch(id, 1); });
       sw.appendChild(prev); sw.appendChild(count); sw.appendChild(next);
-      var role = msg.querySelector('.msg-role');
-      if (role) role.appendChild(sw);
+      var host = msg.querySelector('.msg-role') || msg.querySelector('.user-actions');
+      if (host) host.appendChild(sw);
     });
   }
 
@@ -1111,38 +1173,75 @@
     E.input.style.height = Math.min(E.input.scrollHeight, 132) + 'px';
   }
 
-  /** 进入编辑态：把那条提问放回输入框，发送时在原位置长出新的版本 */
+  /** 原地编辑：气泡本体变成编辑框，下游消息变暗提示「发送后将被新版本取代」。
+      编辑态是纯 UI 状态（editSession），只在点发送那一瞬才把 editingId 注入发送管道——
+      管道（分支、锚定、落库）与正常发送完全同一条路径，编辑期间输入框仍可发新消息。 */
+  var editSession = null;   // { nodeId, parentId, files, text, msgEl }
+
   function startEdit(nodeId) {
     if (streaming) { toast('正在生成，先停止再编辑', true); return; }
     var s = ensureTree(currentSession());
     var node = nodeById(s, nodeId);
     if (!node || node.role !== 'user') { toast('这条提问还没保存', true); return; }
-    editingId = nodeId;
-    E.input.value = node.content || '';
-    autosize();
-    updateSend();
-    // 就地编辑：先把视图截到这条提问之前，后面的内容暂时收起，
-    // 发送后新版本接在这里；想回看旧内容点「取消」或切分支。
-    viewCutId = nodeId;
-    renderMessages();
-    E.hint.textContent = '修改这条提问，发送后成为新版本，旧回答保留（‹ › 可切回）';
-    E.btnEditCancel.hidden = false;
-    E.input.focus();
-    try { E.input.setSelectionRange(E.input.value.length, E.input.value.length); } catch (e) {}
-    // 滚到输入框附近
-    E.scroll.scrollTop = E.scroll.scrollHeight;
+    if (editSession) cancelEdit();   // 同时只编辑一条，先恢复上一条
+    var msgEl = E.messages.querySelector('.msg.user[data-id="' + nodeId + '"]');
+    var bubble = msgEl ? msgEl.querySelector('.bubble') : null;
+    if (!bubble) return;
+
+    editSession = { nodeId: nodeId, parentId: node.parentId || null, files: node.files || [], text: node.content || '', msgEl: msgEl };
+    msgEl.classList.add('editing');
+    for (var n = msgEl.nextElementSibling; n; n = n.nextElementSibling) n.classList.add('dim-edit');
+
+    bubble.innerHTML = '<textarea class="edit-input" rows="1"></textarea>' +
+      '<div class="edit-actions">' +
+      '<button class="edit-cancel" type="button">取消</button>' +
+      '<button class="edit-send" type="button">发送</button>' +
+      '</div>';
+    var ta = bubble.querySelector('.edit-input');
+    ta.value = editSession.text;
+    var grow = function () { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 260) + 'px'; };
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmEdit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    });
+    bubble.querySelector('.edit-cancel').addEventListener('click', cancelEdit);
+    bubble.querySelector('.edit-send').addEventListener('click', confirmEdit);
+    grow();
+    ta.focus();
+    try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
+    if (msgEl.scrollIntoView) msgEl.scrollIntoView({ block: 'nearest' });
   }
 
   function cancelEdit() {
-    if (!editingId) return;
-    editingId = null;
-    viewCutId = null;
-    E.input.value = '';
-    autosize();
-    updateSend();
-    E.hint.textContent = '内容由 DeepSeek 生成，请注意核实';
-    E.btnEditCancel.hidden = true;
-    renderMessages();
+    if (!editSession) return;
+    var msgEl = editSession.msgEl;
+    var text = editSession.text;
+    editSession = null;
+    var bubble = msgEl.querySelector('.bubble');
+    if (bubble) bubble.textContent = text;   // 气泡内容本来就是纯文本，直接恢复
+    msgEl.classList.remove('editing');
+    var dims = E.messages.querySelectorAll('.dim-edit');
+    for (var i = 0; i < dims.length; i++) dims[i].classList.remove('dim-edit');
+  }
+
+  function confirmEdit() {
+    if (!editSession || streaming) return;
+    var ta = editSession.msgEl.querySelector('.edit-input');
+    var text = (ta ? ta.value : '').trim();
+    if (!text) { toast('内容不能为空', true); return; }
+    var orig = editSession.text;
+    var files = editSession.files || [];
+    if (text === orig) { cancelEdit(); return; }   // 没改动 = 取消，不制造重复分支
+    // 确认的这一瞬才把编辑上下文注入发送管道；DOM 由管道里的 renderMessages 重画
+    editingId = editSession.nodeId;
+    // 旧实现编辑会丢附件：chips 就在气泡下方，确认时原样带上
+    attachments = files.filter(function (f) { return f.fileId || f.image; }).map(function (f) {
+      return { name: f.name, size: f.size, fileId: f.fileId, purpose: f.purpose, image: f.image };
+    });
+    E.input.value = text;
+    editSession = null;
+    send();
   }
 
   function updateSend() {
@@ -1240,35 +1339,56 @@
   }
 
   /* ---------------- 打开/关闭面板 ---------------- */
+  /* 面板显隐助手：hidden 管生死，.open 管过渡——关的时候先演完动画再 hidden */
+  function showPanel(el2, mask) {
+    if (mask) {
+      if (mask._ht) { clearTimeout(mask._ht); mask._ht = null; }
+      mask.hidden = false;
+      void mask.offsetHeight;
+      mask.classList.add('open');
+    }
+    if (el2._ht) { clearTimeout(el2._ht); el2._ht = null; }
+    el2.hidden = false;
+    void el2.offsetHeight;
+    el2.classList.add('open');
+  }
+  function hidePanel(el2, mask) {
+    el2.classList.remove('open');
+    if (el2._ht) clearTimeout(el2._ht);
+    el2._ht = setTimeout(function () {
+      if (!el2.classList.contains('open')) el2.hidden = true;
+    }, 280);
+    if (mask) {
+      mask.classList.remove('open');
+      if (mask._ht) clearTimeout(mask._ht);
+      mask._ht = setTimeout(function () {
+        if (!mask.classList.contains('open')) mask.hidden = true;
+      }, 280);
+    }
+  }
+
   function openSheet(which) {
     if (which === 'sessions') {
       if (E.sessionSearch) E.sessionSearch.value = '';
       renderSessions();
-      E.sheet.hidden = false;
-      E.sheetMask.hidden = false;
+      showPanel(E.sheet, E.sheetMask);
     } else if (which === 'settings') {
       fillSettings();
-      E.settings.hidden = false;
-      E.settingsMask.hidden = false;
+      showPanel(E.settings, E.settingsMask);
     }
   }
 
   function closeAll() {
-    E.sheet.hidden = true;
-    E.sheetMask.hidden = true;
-    E.settings.hidden = true;
-    E.settingsMask.hidden = true;
-    E.actionSheet.hidden = true;
-    E.actionMask.hidden = true;
-    E.confirmDlg.hidden = true;
-    E.confirmMask.hidden = true;
+    if (!E.sheet.hidden) hidePanel(E.sheet, E.sheetMask);
+    if (!E.settings.hidden) hidePanel(E.settings, E.settingsMask);
+    if (!E.actionSheet.hidden) hidePanel(E.actionSheet, E.actionMask);
+    if (!E.confirmDlg.hidden) hidePanel(E.confirmDlg, E.confirmMask);
     closeSourcesDrawer();
   }
 
   /** 只收确认弹窗自身，底下的抽屉/面板保持原状 */
   function hideConfirm() {
-    E.confirmDlg.hidden = true;
-    E.confirmMask.hidden = true;
+    if (!E.confirmDlg.hidden) hidePanel(E.confirmDlg, E.confirmMask);
   }
 
   /** 居中确认弹窗：okLabel 为危险操作文案时配 danger 样式 */
@@ -1279,8 +1399,7 @@
     E.confirmOk.onclick = function () { hideConfirm(); onOk(); };
     E.confirmCancel.onclick = hideConfirm;
     E.confirmMask.onclick = hideConfirm;
-    E.confirmDlg.hidden = false;
-    E.confirmMask.hidden = false;
+    showPanel(E.confirmDlg, E.confirmMask);
   }
 
   function showActions(title, items) {
@@ -1295,8 +1414,7 @@
       });
       E.actionBody.appendChild(b);
     });
-    E.actionSheet.hidden = false;
-    E.actionMask.hidden = false;
+    showPanel(E.actionSheet, E.actionMask);
   }
 
   function renderSessions() {
@@ -1365,6 +1483,7 @@
       row.appendChild(del);
       row.addEventListener('click', function () {
         // 切走之前必须停掉正在进行的流，否则会在后台继续烧 token
+        clearStreamAnchor();
         if (streaming) stopStream();
         currentId = s.id;
         ensureTree(s);
@@ -1803,7 +1922,6 @@
       var en = nodeById(se, editingId);
       editAnchor = en ? (en.parentId || null) : null;
       editingId = null;
-      viewCutId = null;
       E.hint.textContent = '正在生成…';
     }
 
@@ -1893,7 +2011,7 @@
     streaming = true;
     updateSend();
     E.hint.textContent = '正在生成…';
-    scrollBottom(true);
+    anchorQuestion(answerParentId ? E.messages.querySelector('.msg.user[data-id="' + answerParentId + '"]') : null);
 
     // 记下这次请求属于哪个会话：结果回写前要校验，否则切换会话后内容会串
     var ownerSessionId = currentId;
@@ -1965,7 +2083,7 @@
             buf = buf.slice(idx + 1);
             consume(line);
           }
-          scrollBottom();
+          updateAnchorSpacer();
           return pump();
         });
       }
@@ -2050,7 +2168,7 @@
       persistSafe();
       renderSessions();
       paintBranches();
-      scrollBottom();
+      updateAnchorSpacer();
     });
 
     function handleChunk(chunk) {
@@ -2088,7 +2206,7 @@
         } else if (ev.type === 'step_reasoning_done') {
           E.hint.textContent = '搜索完成，继续思考…';
         }
-        scrollBottom();
+        updateAnchorSpacer();
         return;
       }
 
@@ -2262,7 +2380,7 @@
         if (!streaming) send();
       }
       // Esc 退出编辑态（外接键盘）
-      if (e.key === 'Escape' && editingId) {
+      if (e.key === 'Escape' && editSession) {
         e.preventDefault();
         cancelEdit();
       }
@@ -2377,7 +2495,6 @@
     $('#btnCloseSources').addEventListener('click', closeAll);
 
     // 编辑态的「取消」
-    E.btnEditCancel.addEventListener('click', cancelEdit);
 
     $('#btnModel').addEventListener('click', function () {
       showActions('选择模型', [
@@ -2521,7 +2638,7 @@
       if (E.sourcesSheet.classList.contains('open')) { closeAll(); return true; }
       if (!E.sheet.hidden) { closeAll(); return true; }
       // 编辑态优先退出编辑，而不是直接关 App
-      if (editingId) { cancelEdit(); return true; }
+      if (editSession) { cancelEdit(); return true; }
       return false;
     };
 
@@ -2558,7 +2675,6 @@
     }
 
     if (!currentId && !sessions.length) newSession();
-    if (!currentId && sessions.length) currentId = sessions[0].id;
     syncMessages();
     if (messages.length) renderMessages();
     else renderWelcome();

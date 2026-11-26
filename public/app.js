@@ -429,7 +429,6 @@ const els = {
   btnAttach: $('#btnAttach'),
   keyDot: $('#keyDot'),
   toast: $('#toast'),
-  btnEditCancel: $('#btnEditCancel'),
   btnThink: $('#btnThink'),
   btnJumpLatest: $('#btnJumpLatest'),
   sourcesScrim: $('#sourcesScrim'),
@@ -576,6 +575,7 @@ function renderSessionList() {
 }
 
 async function openSession(id) {
+  clearStreamAnchor();
   if (state.streaming) stopStreaming();
   state.streamToken += 1;   // 让旧会话里在途的流作废
   try {
@@ -599,8 +599,9 @@ async function openSession(id) {
 /* ============ 6. 消息渲染 ============ */
 
 function renderWelcome() {
-  state.sessionId = null;
-  LS.set('sessionId', null);
+  // 注意：这里不能顺手清 state.sessionId——编辑/重生成第一条提问时发送管道会
+  // 把消息截空再重画，空列表会走到这里，一旦清掉 sessionId 编辑就会退化成新建会话
+  //（正经的「新对话/删会话」路径自己会先清掉再调这里）。
   els.chatTitle.textContent = '';
   els.usageText.textContent = '';
   els.messages.innerHTML = '';
@@ -647,6 +648,7 @@ function renderWelcome() {
 }
 
 function renderMessages() {
+  editSession = null;   // 任何重画都会销毁编辑 UI，状态同步置空（切会话/新会话天然取消编辑）
   els.messages.innerHTML = '';
   if (!state.messages.length) {
     renderWelcome();
@@ -654,8 +656,12 @@ function renderMessages() {
   }
   for (const m of state.messages) {
     if (m.role === 'user') addUserMessage(m.content, m.id, m.files);
-    else if (m.role === 'assistant')
-      addAssistantMessage(m.content, m.reasoning, m.tools, m.model, m.id, m.annotations || null);
+    else if (m.role === 'assistant') {
+      // finish() 触发同步冲刷：setContent 走的是为流式输出设计的 60ms 节流渲染，
+      // 历史消息若不冲刷，openSession 的 scrollToBottom 会在空壳状态下量出错误高度
+      const a = addAssistantMessage(m.content, m.reasoning, m.tools, m.model, m.id, m.annotations || null);
+      a.finish();
+    }
   }
   paintBranches();
 }
@@ -685,7 +691,8 @@ function paintBranches() {
       const dir = e.target.closest('.b-prev') ? 'prev' : e.target.closest('.b-next') ? 'next' : null;
       if (dir) switchBranch(m.id, dir);
     });
-    msg.querySelector('.msg-role')?.append(sw);
+    // 提问没有 .msg-role（那是回答的标题行），挂到自己的 actions 区，否则编辑分支永远画不出切换器
+    (msg.querySelector('.msg-role') || msg.querySelector('.user-actions'))?.append(sw);
   }
 }
 
@@ -741,30 +748,69 @@ function addUserMessage(text, nodeId, files) {
   return msg;
 }
 
-/** 把某个位置上的提问收进输入框里改，用户改完按发送 */
+/** 原地编辑：气泡本体变成编辑框，下游消息变暗提示「发送后将被新版本取代」。
+    编辑态是纯 UI 状态（editSession），只在点发送的那一瞬才把 editing 注入发送管道——
+    管道（分支、锚定、落库）与正常发送完全同一条路径，且编辑期间输入框仍可发新消息。 */
+let editSession = null;   // { nodeId, parentId, files, text, msgEl }
+
 function startEdit(nodeId) {
   const m = state.messages.find((x) => x.id === nodeId);
   if (!m) return;
-  state.editing = { nodeId, parentId: m.parentId || null };
-  els.input.value = m.content;
-  autosize();
-  updateSendState();
-  els.input.focus();
-  els.input.setSelectionRange(m.content.length, m.content.length);
-  els.hintText.textContent = '修改这条提问，发送后会作为新的版本，旧回答仍保留（‹ 1/2 › 可切回）';
-  els.btnEditCancel.hidden = false;
-  els.composer.classList.add('editing');
+  if (editSession) cancelEdit();   // 同时只编辑一条，先恢复上一条
+  const msgEl = els.messages.querySelector(`.msg.user[data-id="${cssEscape(nodeId)}"]`);
+  const bubble = msgEl?.querySelector('.bubble');
+  if (!bubble) return;
+
+  editSession = { nodeId, parentId: m.parentId || null, files: m.files || [], text: m.content, msgEl };
+  msgEl.classList.add('editing');
+  for (let n = msgEl.nextElementSibling; n; n = n.nextElementSibling) n.classList.add('dim-edit');
+
+  bubble.innerHTML = `
+    <textarea class="edit-input" rows="1"></textarea>
+    <div class="edit-actions">
+      <button class="edit-cancel" type="button">取消</button>
+      <button class="edit-send" type="button">发送</button>
+    </div>`;
+  const ta = bubble.querySelector('.edit-input');
+  ta.value = m.content;
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 300) + 'px'; };
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmEdit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+  });
+  bubble.querySelector('.edit-cancel').addEventListener('click', cancelEdit);
+  bubble.querySelector('.edit-send').addEventListener('click', confirmEdit);
+  grow();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  msgEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function cancelEdit() {
-  state.editing = null;
-  els.input.value = '';
-  autosize();
-  updateSendState();
-  els.btnEditCancel.hidden = true;
-  els.composer.classList.remove('editing');
-  els.hintText.textContent = '内容由 AI 生成，请注意核实';
-  els.input.focus();
+  if (!editSession) return;
+  const { msgEl, text } = editSession;
+  editSession = null;
+  const bubble = msgEl.querySelector('.bubble');
+  if (bubble) bubble.textContent = text;   // 气泡内容本来就是纯文本，直接恢复
+  msgEl.classList.remove('editing');
+  els.messages.querySelectorAll('.dim-edit').forEach((x) => x.classList.remove('dim-edit'));
+}
+
+function confirmEdit() {
+  if (!editSession || state.streaming) return;
+  const ta = editSession.msgEl.querySelector('.edit-input');
+  const text = (ta?.value || '').trim();
+  if (!text) { toast('内容不能为空', true); return; }
+  const { nodeId, parentId, files, text: orig } = editSession;
+  if (text === orig) { cancelEdit(); return; }   // 没改动 = 取消，不制造重复分支
+  // 确认的这一瞬才把编辑上下文注入发送管道；DOM 由管道里的 renderMessages 重画
+  state.editing = { nodeId, parentId };
+  // 旧实现编辑会丢附件：chips 就在气泡下方，确认时原样带上
+  state.attachments = (files || []).filter((f) => f.fileId).map((f) => ({ ...f }));
+  els.input.value = text;
+  editSession = null;
+  send();
 }
 
 /**
@@ -1378,6 +1424,48 @@ function scrollToBottom(force = false) {
   syncJumpLatest();
 }
 
+/* ---- 提问锚定：发送后把提问固定在视口顶部，流式期间不追滚 ----
+   追滚会跟着 SSE 输出不停改 scrollTop，整个页面持续重排，观感就是抖。
+   改为：发送时一次性把提问滚到顶部，回答在下方生长，滚动位置完全不动。
+   尾部补位（spacer）保证提问「够得着」顶部：随着回答变长补位缩小，
+   总高度恒等于「提问置顶所需的最小高度」，不产生多余空白。 */
+let streamAnchor = null;   // { top } 本次流式输出锚定的内容坐标
+
+function anchorQuestion(msgEl) {
+  if (!msgEl) return;
+  // 先清掉上轮残留补位再测量——它还夹在消息中间，会污染 target
+  els.messages.querySelector('.stream-spacer')?.remove();
+  const sc = els.scroll;
+  const target = Math.max(0,
+    msgEl.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - 12);
+  streamAnchor = { top: target };
+  updateAnchorSpacer();
+  sc.scrollTop = target;
+  syncJumpLatest();
+}
+
+function updateAnchorSpacer() {
+  if (!streamAnchor) return;
+  const sc = els.scroll;
+  let sp = els.messages.querySelector('.stream-spacer');
+  if (!sp) {
+    sp = document.createElement('div');
+    sp.className = 'stream-spacer';
+    sp.style.pointerEvents = 'none';
+  }
+  // 必须在末尾：上一轮的残留补位可能夹在消息中间，appendChild 兼具移动语义
+  els.messages.appendChild(sp);
+  sp.style.height = '0px';
+  const deficit = streamAnchor.top + sc.clientHeight - sc.scrollHeight;
+  sp.style.height = `${Math.max(0, deficit)}px`;
+  syncJumpLatest();
+}
+
+function clearStreamAnchor() {
+  streamAnchor = null;
+  els.messages.querySelector('.stream-spacer')?.remove();
+}
+
 /**
  * regenNodeId：只给「重新生成」用。传入一个提问节点 id 时，
  * 不新增提问，直接让模型对同一句提问再答一次，结果作为该提问的另一个回答版本。
@@ -1405,8 +1493,6 @@ async function send(regenNodeId = null) {
   const keepCount = editing ? state.messages.findIndex((m) => m.id === editing.nodeId) : state.messages.length;
   if (editing) {
     state.editing = null;
-    els.btnEditCancel.hidden = true;
-    els.composer.classList.remove('editing');
     els.hintText.textContent = '正在生成…';
     // 只保留到被编辑提问之前的消息，后面的先不显示
     state.messages = state.messages.slice(0, keepCount < 0 ? state.messages.length : keepCount);
@@ -1434,6 +1520,11 @@ async function send(regenNodeId = null) {
     state.messages.push(localUser);
   }
 
+  // 锚定目标：普通发送/编辑是刚追加的提问元素；重新生成是树上那条旧提问
+  const anchorEl = regenNodeId
+    ? els.messages.querySelector(`.msg.user[data-id="${cssEscape(regenNodeId)}"]`)
+    : userMsg;
+
   const handle = addAssistantMessage('', '', [], state.model);
   const toolsSeen = [];
 
@@ -1448,7 +1539,7 @@ async function send(regenNodeId = null) {
   state.streaming = true;
   updateSendState();
   els.hintText.textContent = '正在生成…';
-  scrollToBottom(true);
+  anchorQuestion(anchorEl);
 
   const ctrl = new AbortController();
   state.abortCtrl = ctrl;
@@ -1508,7 +1599,7 @@ async function send(regenNodeId = null) {
           handleEvent(evt);
         }
       }
-      scrollToBottom();
+      updateAnchorSpacer();
     }
 
     function handleEvent(evt) {
@@ -1546,7 +1637,7 @@ async function send(regenNodeId = null) {
           const label = evt.label || '联网';
           currentTool = handle.addTool({ tool: evt.tool, label });
           toolsSeen.push({ tool: evt.tool, label, status: 'running' });
-          scrollToBottom();
+          updateAnchorSpacer();
           break;
         }
         case 'tool_result': {
@@ -1659,6 +1750,7 @@ async function send(regenNodeId = null) {
       const y = els.scroll.scrollTop;
       const before = state.messages.length;
       await refreshSession({ minCount: before });
+      updateAnchorSpacer();
       els.scroll.scrollTop = y;
     }
     els.input.focus();
@@ -1784,7 +1876,6 @@ function bindEvents() {
     if (state.streaming) stopStreaming();
     else send();
   });
-  els.btnEditCancel.addEventListener('click', cancelEdit);
 
   /* 附件：按钮 / 选择文件 / 粘贴 */
   els.btnAttach?.addEventListener('click', () => els.filePicker?.click());
@@ -1929,7 +2020,7 @@ function bindEvents() {
         closeSourcesDrawer();
         return;
       }
-      if (state.editing) {
+      if (editSession) {
         cancelEdit();
         return;
       }
@@ -2028,9 +2119,11 @@ function bindEvents() {
     if (id && !state.streaming) startEdit(id);
   });
 
-  /* 移动端输入时避免被键盘遮挡 */
+  /* 移动端输入时避免被键盘遮挡：只在原本就贴着底部时才贴底，
+     否则会把锚定阅读中的用户拽走（与安卓端同一语义） */
   els.input.addEventListener('focus', () => {
-    setTimeout(() => scrollToBottom(true), 260);
+    const near = els.scroll.scrollHeight - els.scroll.scrollTop - els.scroll.clientHeight < 120;
+    if (near) setTimeout(() => scrollToBottom(true), 260);
   });
 
   /* 回到底部 */
