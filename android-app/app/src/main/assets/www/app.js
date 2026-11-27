@@ -1950,6 +1950,8 @@
         };
       })
     };
+    // 冷启动进欢迎页时 currentId 为空——直接发送要先把会话建出来，否则存提问失败
+    if (!currentSession()) newSession();
     var sTree = ensureTree(currentSession());
     var parent = isEditing ? (editAnchor ? nodeById(sTree, editAnchor) : null) : leafNode();
     var newNode = addNode(sTree, {
